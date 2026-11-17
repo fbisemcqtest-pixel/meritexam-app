@@ -101,7 +101,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     const rawCount = body.questionCount === undefined ? 10 : Number(body.questionCount);
     const questionCount = Number.isInteger(rawCount)
-      ? Math.min(Math.max(rawCount, 0), 30)
+      ? Math.min(Math.max(rawCount, 0), 50)
       : 10;
 
     const rawShortCount = Number(body.shortQuestionCount);
@@ -248,6 +248,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       '2. Avoid ambiguous "All of the above" or "None of the above" MCQ options unless strictly appropriate.',
       `3. ${languageRule}`,
       `4. ${boardLockRule}`,
+      ...(Array.isArray(body.avoidPrompts) && body.avoidPrompts.length > 0
+        ? [
+            `5. Do NOT repeat or paraphrase any of these already-generated questions: ${body.avoidPrompts
+              .filter((item: unknown): item is string => typeof item === 'string')
+              .map((item: string) => item.trim().slice(0, 120))
+              .filter(Boolean)
+              .slice(0, 60)
+              .join(' | ')}`,
+          ]
+        : []),
     ].join('\n');
 
     const systemInstruction = isPunjab

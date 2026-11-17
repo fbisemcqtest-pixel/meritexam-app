@@ -8,6 +8,7 @@
   NPM_FLAGS = "--legacy-peer-deps"
 
 [functions]
+  directory = "netlify/functions"
   node_bundler = "esbuild"
 
 [[redirects]]
@@ -21,8 +22,3 @@
   to = "/.netlify/functions/health"
   status = 200
   force = true
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200

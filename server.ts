@@ -178,7 +178,7 @@ async function startServer() {
 
       const rawCount = body.questionCount === undefined ? 10 : Number(body.questionCount);
       const questionCount = Number.isInteger(rawCount)
-        ? Math.min(Math.max(rawCount, 0), 30)
+        ? Math.min(Math.max(rawCount, 0), 50)
         : 10;
 
       const rawShortCount = Number(body.shortQuestionCount);
@@ -267,6 +267,19 @@ async function startServer() {
             ? `Focus specifically on the ${boardShortName} unit or topic: "${rawTopic}".`
             : `Cover high-yield units ONLY from the official ${boardShortName} textbook for ${gradeCurriculumLabel} ${subject}.`;
 
+      const rawAvoidPrompts = Array.isArray(body.avoidPrompts)
+        ? body.avoidPrompts
+            .filter((item: unknown): item is string => typeof item === 'string')
+            .map((item: string) => item.trim().slice(0, 120))
+            .filter((item: string) => item.length > 0)
+            .slice(0, 60)
+        : [];
+
+      const avoidClause =
+        rawAvoidPrompts.length > 0
+          ? `Do NOT repeat or paraphrase any of these already-generated questions: ${rawAvoidPrompts.join(' | ')}`
+          : '';
+
       const languageRule =
         subject === 'Urdu'
           ? `IMPORTANT: Because the subject is Urdu, write EVERY MCQ, option, short question, long question, and model answer in clean, accurate Urdu script (اردو) aligned with the ${boardShortName} Urdu textbook.`
@@ -318,6 +331,7 @@ async function startServer() {
         '2. Avoid ambiguous "All of the above" or "None of the above" MCQ options unless strictly appropriate.',
         `3. ${languageRule}`,
         `4. ${boardLockRule}`,
+        ...(avoidClause ? [`5. ${avoidClause}`] : []),
       ].join('\n');
 
       const systemInstruction = isPunjab

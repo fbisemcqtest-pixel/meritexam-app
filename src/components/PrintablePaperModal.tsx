@@ -45,6 +45,7 @@ export function PrintablePaperModal({
   onClose,
 }: PrintablePaperModalProps) {
   const [includeAnswerKey, setIncludeAnswerKey] = useState(false);
+  const [editTitle, setEditTitle] = useState(title);
   const [editSchoolName, setEditSchoolName] = useState(schoolName);
   const [editExamLabel, setEditExamLabel] = useState(examLabel);
   const [editPaperDate, setEditPaperDate] = useState(paperDate);
@@ -115,37 +116,91 @@ export function PrintablePaperModal({
         </div>
 
         {/* Quick-edit header bar (hidden in print) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-slate-100">
-          <input
-            type="text"
-            maxLength={140}
-            value={editSchoolName}
-            onChange={(e) => setEditSchoolName(e.target.value)}
-            placeholder="School / Academy Name (prints at top)"
-            className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
-          />
-          <div>
-            <input
-              type="text"
-              maxLength={80}
-              list="print-exam-presets"
-              value={editExamLabel}
-              onChange={(e) => setEditExamLabel(e.target.value)}
-              placeholder="Exam Type (First Term, Send-Up, Monthly Test...)"
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-            <datalist id="print-exam-presets">
-              {EXAM_TYPE_PRESETS.map((preset) => (
-                <option key={preset} value={preset} />
-              ))}
-            </datalist>
+        <div className="space-y-2 pt-2 border-t border-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                School / Academy Name
+              </label>
+              <input
+                type="text"
+                maxLength={140}
+                value={editSchoolName}
+                onChange={(e) => setEditSchoolName(e.target.value)}
+                placeholder="School / Academy Name"
+                className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                Paper / Exam Type (Editable)
+              </label>
+              <input
+                type="text"
+                maxLength={80}
+                list="print-exam-presets"
+                value={editExamLabel}
+                onChange={(e) => setEditExamLabel(e.target.value)}
+                placeholder="Type Term, Send-Up, Monthly Test..."
+                className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+              <datalist id="print-exam-presets">
+                {EXAM_TYPE_PRESETS.map((preset) => (
+                  <option key={preset} value={preset} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                Paper Title (Editable)
+              </label>
+              <input
+                type="text"
+                maxLength={160}
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Paper Title"
+                className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                Paper Date
+              </label>
+              <input
+                type="date"
+                value={editPaperDate}
+                onChange={(e) => setEditPaperDate(e.target.value)}
+                className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
+              />
+            </div>
           </div>
-          <input
-            type="date"
-            value={editPaperDate}
-            onChange={(e) => setEditPaperDate(e.target.value)}
-            className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
-          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500">Quick Exam Type:</span>
+            {['First Term', 'Second Term', 'Send-Up', 'Pre-Board', 'Monthly Assessment'].map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setEditExamLabel(tag)}
+                className={`px-2 py-0.5 text-[11px] rounded border cursor-pointer ${
+                  editExamLabel === tag
+                    ? 'bg-blue-700 border-blue-700 text-white font-medium'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+            {editExamLabel && (
+              <button
+                type="button"
+                onClick={() => setEditExamLabel('')}
+                className="px-2 py-0.5 text-[11px] text-slate-500 hover:text-red-600 cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -172,7 +227,7 @@ export function PrintablePaperModal({
           </p>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h1 className="font-display text-2xl font-bold text-slate-900">
-              {title}
+              {editTitle.trim() || title}
             </h1>
             <span className="text-xs font-mono text-slate-700 font-semibold tabular-nums">
               Total Marks: {totalMarks} · Time: {durationMinutes} Minutes

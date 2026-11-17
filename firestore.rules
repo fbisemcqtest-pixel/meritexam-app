@@ -186,9 +186,9 @@ service cloud.firestore {
         data.topic is string && data.topic.size() <= 500 &&
         data.difficulty in ['Standard', 'Conceptual', 'Board Exam'] &&
         data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 180 &&
-        data.questionCount is int && data.questionCount >= 0 && data.questionCount <= 50 &&
+        data.questionCount is int && data.questionCount >= 0 && data.questionCount <= 200 &&
         (!('marksPerQuestion' in data) || (data.marksPerQuestion is number && data.marksPerQuestion >= 0.25 && data.marksPerQuestion <= 10)) &&
-        data.questions is list && data.questions.size() >= 0 && data.questions.size() <= 50 &&
+        data.questions is list && data.questions.size() >= 0 && data.questions.size() <= 200 &&
         data.questions.size() == data.questionCount &&
         (data.questions.size() == 0 || data.questions[0] is map) &&
         (!('shortQuestionCount' in data) || (data.shortQuestionCount is int && data.shortQuestionCount >= 0 && data.shortQuestionCount <= 30)) &&
@@ -230,15 +230,15 @@ service cloud.firestore {
         isValidId(data.studentId) &&
         data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
         data.studentIdentifier is string && data.studentIdentifier.size() <= 64 &&
-        data.answers is list && data.answers.size() >= 0 && data.answers.size() <= 50 &&
+        data.answers is list && data.answers.size() >= 0 && data.answers.size() <= 200 &&
         (data.answers.size() == 0 || data.answers[0] is int) &&
         (!('shortAnswers' in data) || (data.shortAnswers is list && data.shortAnswers.size() <= 30 && (data.shortAnswers.size() == 0 || data.shortAnswers[0] is string))) &&
         (!('longAnswers' in data) || (data.longAnswers is list && data.longAnswers.size() <= 15 && (data.longAnswers.size() == 0 || data.longAnswers[0] is string))) &&
-        data.score is int && data.score >= 0 && data.score <= 50 &&
-        data.totalQuestions is int && data.totalQuestions >= 0 && data.totalQuestions <= 50 &&
+        data.score is int && data.score >= 0 && data.score <= 200 &&
+        data.totalQuestions is int && data.totalQuestions >= 0 && data.totalQuestions <= 200 &&
         (!('marksPerQuestion' in data) || (data.marksPerQuestion is number && data.marksPerQuestion >= 0.25 && data.marksPerQuestion <= 10)) &&
-        (!('obtainedMarks' in data) || (data.obtainedMarks is number && data.obtainedMarks >= 0 && data.obtainedMarks <= 500)) &&
-        (!('totalMarks' in data) || (data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 500)) &&
+        (!('obtainedMarks' in data) || (data.obtainedMarks is number && data.obtainedMarks >= 0 && data.obtainedMarks <= 2000)) &&
+        (!('totalMarks' in data) || (data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 2000)) &&
         data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
         data.deliveryModeUsed in ['instant', 'admin_review'] &&
         data.resultReleased is bool &&

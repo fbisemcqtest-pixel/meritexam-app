@@ -44,6 +44,7 @@ export interface GenerateMCQRequest {
   longQuestionCount?: number;
   shortMarks?: number;
   longMarks?: number;
+  avoidPrompts?: string[];
 }
 
 export interface GenerateMCQResponse {
@@ -90,7 +91,7 @@ async function requestGenerateEndpoint(
   };
 }
 
-export async function generateMCQsFromServer(
+async function executeSingleGenerateCall(
   req: GenerateMCQRequest,
 ): Promise<GenerateMCQResponse> {
   let result = await requestGenerateEndpoint('/api/mcq/generate', req);
@@ -123,6 +124,70 @@ export async function generateMCQsFromServer(
   };
 }
 
+export async function generateMCQsFromServer(
+  req: GenerateMCQRequest,
+): Promise<GenerateMCQResponse> {
+  const totalRequestedMcqs = Math.min(Math.max(Math.round(req.questionCount || 0), 0), 200);
+  if (totalRequestedMcqs <= 30) {
+    return executeSingleGenerateCall({
+      ...req,
+      questionCount: totalRequestedMcqs,
+    });
+  }
+
+  const batchSize = 30;
+  const collectedQuestions: MCQQuestion[] = [];
+  let suggestedTitle = '';
+  let shortQuestions: SubjectiveQuestion[] = [];
+  let longQuestions: SubjectiveQuestion[] = [];
+
+  let remaining = totalRequestedMcqs;
+  let batchIndex = 0;
+
+  while (remaining > 0 && batchIndex < 10) {
+    const chunkCount = Math.min(remaining, batchSize);
+    const avoidPrompts = collectedQuestions
+      .slice(-50)
+      .map((q) => q.prompt.slice(0, 110));
+
+    const chunkRes = await executeSingleGenerateCall({
+      ...req,
+      questionCount: chunkCount,
+      shortQuestionCount: batchIndex === 0 ? req.shortQuestionCount : 0,
+      longQuestionCount: batchIndex === 0 ? req.longQuestionCount : 0,
+      ...(avoidPrompts.length > 0 ? { avoidPrompts } : {}),
+    });
+
+    if (batchIndex === 0) {
+      suggestedTitle = chunkRes.title;
+      shortQuestions = chunkRes.shortQuestions;
+      longQuestions = chunkRes.longQuestions;
+    }
+
+    const existingPromptSet = new Set(
+      collectedQuestions.map((q) => q.prompt.trim().toLowerCase()),
+    );
+    const freshQuestions = chunkRes.questions.filter(
+      (q) => !existingPromptSet.has(q.prompt.trim().toLowerCase()),
+    );
+
+    collectedQuestions.push(...freshQuestions);
+    remaining = totalRequestedMcqs - collectedQuestions.length;
+    batchIndex += 1;
+
+    if (chunkRes.questions.length === 0) {
+      break;
+    }
+  }
+
+  return {
+    title: suggestedTitle || `${req.grade} ${req.subject} Assessment`,
+    questions: collectedQuestions.slice(0, totalRequestedMcqs),
+    shortQuestions,
+    longQuestions,
+  };
+}
+
 export async function publishMCQTest(input: {
   title: string;
   board?: ExamBoard;
@@ -146,7 +211,7 @@ export async function publishMCQTest(input: {
   createdByRole: 'teacher' | 'admin' | 'student_practice';
 }): Promise<MCQTest> {
   const id = generateSafeId('test');
-  const cleanQuestions = input.questions.slice(0, 50);
+  const cleanQuestions = input.questions.slice(0, 200);
   const cleanShortQuestions = (input.shortQuestions ?? []).slice(0, 30);
   const cleanLongQuestions = (input.longQuestions ?? []).slice(0, 15);
   const cleanSchoolName = (input.schoolName ?? '').trim().slice(0, 140);

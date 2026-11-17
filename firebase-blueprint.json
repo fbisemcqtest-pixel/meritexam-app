@@ -1,0 +1,436 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Registered Student, Teacher, or Admin account profile with verification status.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth user ID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200,
+          "description": "Verified email address of the user."
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Full name of the student, teacher, or admin."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "teacher", "admin"],
+          "description": "Account role."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Admin approval status. Students and teachers start as pending until verified by Admin."
+        },
+        "grade": {
+          "type": "string",
+          "enum": ["9th", "10th", "1st A", "2nd Year", "All"],
+          "description": "Enrolled or assigned class level."
+        },
+        "subject": {
+          "type": "string",
+          "enum": [
+            "Physics", "Chemistry", "Biology", "Math", "Computer Science",
+            "English", "Urdu", "Islamiat", "Pakistan Studies", "General Science",
+            "General Math", "Civics", "Economics", "Education", "Islamic Studies",
+            "History", "Geography", "Sociology", "Psychology", "Home Economics",
+            "All"
+          ],
+          "description": "Primary subject specialization for teachers or focus subject."
+        },
+        "identifier": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Student roll number or Teacher employee ID."
+        },
+        "approvedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the admin who approved or rejected the account."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account registration server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["uid", "email", "fullName", "role", "status", "grade", "subject", "identifier", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator grant record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200,
+          "description": "Admin email address."
+        },
+        "grantedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID or system identifier that granted admin access."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when admin role was granted."
+        }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Admin-controlled global examination and result release configuration.",
+      "type": "object",
+      "properties": {
+        "resultMode": {
+          "type": "string",
+          "enum": ["instant", "admin_review"],
+          "description": "Option 1: instant (immediate score & explanation) vs Option 2: admin_review (held until Admin releases results)."
+        },
+        "testAccessMode": {
+          "type": "string",
+          "enum": ["instant_open", "scheduled_window"],
+          "description": "Option 1: instant_open (available immediately) vs Option 2: scheduled_window (Admin/Teacher controlled release)."
+        },
+        "allowStudentInstantPractice": {
+          "type": "boolean",
+          "description": "Whether approved students can launch instant subject-only AI MCQ tests directly."
+        },
+        "defaultTimeLimitMinutes": {
+          "type": "integer",
+          "description": "Default MCQ test duration in minutes."
+        },
+        "passingPercentage": {
+          "type": "integer",
+          "description": "Minimum passing score percentage."
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Admin UID who last updated settings."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of settings update."
+        }
+      },
+      "required": ["resultMode", "testAccessMode", "allowStudentInstantPractice", "defaultTimeLimitMinutes", "passingPercentage", "updatedBy", "updatedAt"]
+    },
+    "MCQTest": {
+      "title": "MCQTest",
+      "description": "Subject-based MCQ test for 9th, 10th, 1st A, or 2nd Year across FBISE NBF Sciences, Compulsory, and Arts subjects.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the test."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "description": "Test title."
+        },
+        "board": {
+          "type": "string",
+          "enum": ["fbise_nbf", "punjab_ptb"],
+          "description": "Optional curriculum board (Federal Board NBF vs Punjab Board PTB)."
+        },
+        "schoolName": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Optional school or institution name printed at top of paper."
+        },
+        "examLabel": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Optional exam type (e.g. First Term, Send-Up, Monthly Assessment)."
+        },
+        "paperDate": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional examination date string."
+        },
+        "grade": {
+          "type": "string",
+          "enum": ["9th", "10th", "1st A", "2nd Year"],
+          "description": "Academic level."
+        },
+        "subject": {
+          "type": "string",
+          "enum": [
+            "Physics", "Chemistry", "Biology", "Math", "Computer Science",
+            "English", "Urdu", "Islamiat", "Pakistan Studies", "General Science",
+            "General Math", "Civics", "Economics", "Education", "Islamic Studies",
+            "History", "Geography", "Sociology", "Psychology", "Home Economics"
+          ],
+          "description": "Academic subject."
+        },
+        "topic": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional chapter, multi-chapter list, or syllabus focus."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["Standard", "Conceptual", "Board Exam"],
+          "description": "Question difficulty tier."
+        },
+        "durationMinutes": {
+          "type": "integer",
+          "description": "Allowed time in minutes."
+        },
+        "questionCount": {
+          "type": "integer",
+          "description": "Number of MCQs in the test."
+        },
+        "marksPerQuestion": {
+          "type": "number",
+          "description": "Marks awarded per correct MCQ (e.g. 0.5, 1, 2)."
+        },
+        "questions": {
+          "type": "array",
+          "description": "Array of structured MCQ items (0 to 50)."
+        },
+        "shortQuestionCount": {
+          "type": "integer",
+          "description": "Optional number of short questions (0 to 30)."
+        },
+        "longQuestionCount": {
+          "type": "integer",
+          "description": "Optional number of long/descriptive questions (0 to 15)."
+        },
+        "shortQuestions": {
+          "type": "array",
+          "description": "Optional array of structured short-answer questions (0 to 30)."
+        },
+        "longQuestions": {
+          "type": "array",
+          "description": "Optional array of structured long/descriptive questions (0 to 15)."
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": ["inherit", "instant", "admin_review"],
+          "description": "Result mode override or inherit from Admin global setting."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether the test is active and visible to approved students."
+        },
+        "scheduledReleaseAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Optional ISO timestamp for scheduled release."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Creator UID (teacher or admin)."
+        },
+        "createdByName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Creator display name."
+        },
+        "createdByRole": {
+          "type": "string",
+          "enum": ["teacher", "admin", "student_practice"],
+          "description": "Role of creator."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update server timestamp."
+        }
+      },
+      "required": ["id", "title", "grade", "subject", "topic", "difficulty", "durationMinutes", "questionCount", "questions", "deliveryMode", "isActive", "scheduledReleaseAt", "createdBy", "createdByName", "createdByRole", "createdAt", "updatedAt"]
+    },
+    "TestAttempt": {
+      "title": "TestAttempt",
+      "description": "Student MCQ test submission and grading record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Attempt ID."
+        },
+        "testId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Referenced MCQTest ID."
+        },
+        "testTitle": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Snapshot title of the test."
+        },
+        "testCreatorId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the teacher or admin who created the test."
+        },
+        "grade": {
+          "type": "string",
+          "enum": ["9th", "10th", "1st A", "2nd Year"],
+          "description": "Class level."
+        },
+        "subject": {
+          "type": "string",
+          "enum": [
+            "Physics", "Chemistry", "Biology", "Math", "Computer Science",
+            "English", "Urdu", "Islamiat", "Pakistan Studies", "General Science",
+            "General Math", "Civics", "Economics", "Education", "Islamic Studies",
+            "History", "Geography", "Sociology", "Psychology", "Home Economics"
+          ],
+          "description": "Subject."
+        },
+        "studentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Submitting student UID."
+        },
+        "studentName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Submitting student name."
+        },
+        "studentIdentifier": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Student roll number."
+        },
+        "answers": {
+          "type": "array",
+          "description": "Array of chosen option indices (-1 for unanswered)."
+        },
+        "shortAnswers": {
+          "type": "array",
+          "description": "Optional array of student responses to short questions."
+        },
+        "longAnswers": {
+          "type": "array",
+          "description": "Optional array of student responses to long questions."
+        },
+        "score": {
+          "type": "integer",
+          "description": "Correct answers count."
+        },
+        "totalQuestions": {
+          "type": "integer",
+          "description": "Total questions in the test."
+        },
+        "marksPerQuestion": {
+          "type": "number",
+          "description": "Marks per MCQ applied during grading."
+        },
+        "obtainedMarks": {
+          "type": "number",
+          "description": "Total marks obtained."
+        },
+        "totalMarks": {
+          "type": "number",
+          "description": "Maximum marks for the test."
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Score percentage 0-100."
+        },
+        "deliveryModeUsed": {
+          "type": "string",
+          "enum": ["instant", "admin_review"],
+          "description": "Effective result mode applied at submission."
+        },
+        "resultReleased": {
+          "type": "boolean",
+          "description": "True immediately in instant mode; false until released by Admin in admin_review mode."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["submitted", "reviewed"],
+          "description": "Submission lifecycle state."
+        },
+        "releasedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Admin UID who released the result, or empty string."
+        },
+        "submittedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server submission timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": ["id", "testId", "testTitle", "testCreatorId", "grade", "subject", "studentId", "studentName", "studentIdentifier", "answers", "score", "totalQuestions", "percentage", "deliveryModeUsed", "resultReleased", "status", "releasedBy", "submittedAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Stores Student, Teacher, and Admin profiles and verification statuses."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Registry of verified administrators."
+    },
+    "/systemSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSettings" },
+      "description": "Global Admin-selected examination mode settings (document ID: global)."
+    },
+    "/tests/{testId}": {
+      "schema": { "$ref": "#/entities/MCQTest" },
+      "description": "Subject MCQ tests across 9th, 1st A, and 2nd Year."
+    },
+    "/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/TestAttempt" },
+      "description": "Student MCQ test submissions and result release states."
+    }
+  }
+}

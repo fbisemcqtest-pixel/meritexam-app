@@ -1,0 +1,8 @@
+{
+  "name": "MeritExam",
+  "description": "Federal Board (FBISE) & National Book Foundation (NBF) MCQ examination portal for 9th, 10th, 1st A, and 2nd Year across all Sciences, Compulsory, and Arts / Humanities books.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

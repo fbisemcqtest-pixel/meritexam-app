@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Printer, X } from 'lucide-react';
+import { FileDown, FileText, Loader2, Printer, X } from 'lucide-react';
+import { exportPaperToPdf, exportPaperToWord } from '../utils/paperExport';
 import {
   BOARD_PRINT_LABELS,
   EXAM_TYPE_PRESETS,
@@ -51,6 +52,9 @@ export function PrintablePaperModal({
 }: PrintablePaperModalProps) {
   const [includeAnswerKey, setIncludeAnswerKey] = useState(false);
   const [compactLayout, setCompactLayout] = useState(true);
+  const [paperSize, setPaperSize] = useState<'a4' | 'legal'>('a4');
+  const [sideBySideOr, setSideBySideOr] = useState(true);
+  const [twoColumnMcqs, setTwoColumnMcqs] = useState(false);
   const [paperStyle, setPaperStyle] = useState<'fbise_official' | 'standard'>(
     board === 'fbise_nbf' ? 'fbise_official' : 'standard',
   );
@@ -61,6 +65,10 @@ export function PrintablePaperModal({
   const [editPaperDate, setEditPaperDate] = useState(paperDate);
   const [editShortChoiceNote, setEditShortChoiceNote] = useState(shortChoiceNote);
   const [editLongChoiceNote, setEditLongChoiceNote] = useState(longChoiceNote);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingWord, setExportingWord] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
 
   const mcqQuestionNum = questions.length > 0 ? 1 : 0;
   const shortQuestionNum = shortQuestions.length > 0 ? mcqQuestionNum + 1 : 0;
@@ -94,8 +102,63 @@ export function PrintablePaperModal({
     return trimmed;
   })();
 
+  const activeTitle = editTitle.trim() || title;
+
+  async function handleDownloadPdf() {
+    if (!sheetRef.current) return;
+    setExportError(null);
+    setExportingPdf(true);
+    try {
+      await exportPaperToPdf(sheetRef.current, activeTitle, compactLayout, paperSize);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'PDF export failed. Please try Print.');
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
+  async function handleDownloadWord() {
+    setExportError(null);
+    setExportingWord(true);
+    try {
+      await exportPaperToWord({
+        title: activeTitle,
+        board,
+        schoolName: editSchoolName,
+        examLabel: editExamLabel,
+        formattedDate,
+        grade,
+        subject,
+        topic,
+        durationMinutes,
+        marksPerQuestion,
+        totalMarks,
+        mcqTotalMarks,
+        shortTotalMarks,
+        longTotalMarks,
+        questions,
+        shortQuestions,
+        longQuestions,
+        shortChoiceNote: editShortChoiceNote,
+        longChoiceNote: editLongChoiceNote,
+        paperStyle,
+        paperSize,
+        compactLayout,
+        sideBySideOr,
+        twoColumnMcqs,
+        separateSectionA,
+        includeAnswerKey,
+      });
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Word export failed.');
+    } finally {
+      setExportingWord(false);
+    }
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex flex-col overflow-y-auto print-only-sheet">
+      <style>{`@media print { @page { size: ${paperSize === 'legal' ? 'legal' : 'A4'} portrait; margin: ${compactLayout ? '7mm 9mm' : '10mm 12mm'}; } }`}</style>
       {/* Toolbar (hidden in print) */}
       <div className="no-print sticky top-0 z-10 bg-white border-b border-slate-200 px-6 py-3 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -127,6 +190,30 @@ export function PrintablePaperModal({
                 Standard School Sheet
               </button>
             </div>
+            <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setPaperSize('a4')}
+                className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                  paperSize === 'a4'
+                    ? 'bg-blue-700 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                A4 Page
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaperSize('legal')}
+                className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                  paperSize === 'legal'
+                    ? 'bg-blue-700 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Legal (8.5×14)
+              </button>
+            </div>
             <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
               <input
                 type="checkbox"
@@ -134,8 +221,30 @@ export function PrintablePaperModal({
                 onChange={(e) => setCompactLayout(e.target.checked)}
                 className="w-4 h-4 accent-blue-700"
               />
-              Compact (1–2 Page Fit)
+              Compact (2-Page Fit)
             </label>
+            {(hasShortOr || hasLongOr) && (
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sideBySideOr}
+                  onChange={(e) => setSideBySideOr(e.target.checked)}
+                  className="w-4 h-4 accent-blue-700"
+                />
+                Side-by-Side OR (Left | Right)
+              </label>
+            )}
+            {questions.length > 0 && (
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={twoColumnMcqs}
+                  onChange={(e) => setTwoColumnMcqs(e.target.checked)}
+                  className="w-4 h-4 accent-blue-700"
+                />
+                2-Col MCQs
+              </label>
+            )}
             {paperStyle === 'fbise_official' && questions.length > 0 && (shortQuestions.length > 0 || longQuestions.length > 0) && (
               <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
                 <input
@@ -158,14 +267,40 @@ export function PrintablePaperModal({
             </label>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={exportingPdf || exportingWord}
+              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              {exportingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileDown className="w-4 h-4" />
+              )}
+              {exportingPdf ? 'Generating PDF...' : 'Download PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadWord}
+              disabled={exportingWord || exportingPdf}
+              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-white bg-indigo-700 hover:bg-indigo-800 disabled:opacity-60 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              {exportingWord ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileText className="w-4 h-4" />
+              )}
+              {exportingWord ? 'Creating Word...' : 'Download Word (.docx)'}
+            </button>
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg inline-flex items-center gap-2 cursor-pointer"
+              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              Print / Save as PDF
+              Print
             </button>
             <button
               type="button"
@@ -177,6 +312,11 @@ export function PrintablePaperModal({
             </button>
           </div>
         </div>
+        {exportError && (
+          <div className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md">
+            {exportError}
+          </div>
+        )}
 
         {/* Quick-edit header bar (hidden in print) */}
         <div className="space-y-2 pt-2 border-t border-slate-100">
@@ -305,14 +445,15 @@ export function PrintablePaperModal({
 
       {/* Printable Paper Sheet */}
       <div
-        className={`max-w-4xl w-full mx-auto my-6 bg-white border border-slate-200 print:max-w-none print:border-none print:my-0 print:p-0 ${
+        ref={sheetRef}
+        className={`${paperSize === 'legal' ? 'max-w-[820px]' : 'max-w-[794px]'} w-full mx-auto my-6 bg-white border border-slate-200 print:max-w-none print:border-none print:my-0 print:p-0 ${
           compactLayout
-            ? 'p-5 sm:p-7 space-y-3.5 print:space-y-3'
-            : 'p-6 sm:p-10 space-y-6 print:space-y-5'
+            ? 'p-4 sm:p-5 space-y-2.5 print:space-y-2'
+            : 'p-6 sm:p-9 space-y-5 print:space-y-4'
         }`}
       >
         {paperStyle === 'fbise_official' ? (
-          <div className="border-2 border-slate-900 p-2.5 sm:p-3 space-y-2">
+          <div data-pdf-block="true" className="border-2 border-slate-900 p-2.5 sm:p-3 space-y-2">
             {/* Official Board Header */}
             <div className="text-center border-b border-slate-900 pb-2">
               {editSchoolName.trim() && (
@@ -372,7 +513,7 @@ export function PrintablePaperModal({
             )}
           </div>
         ) : (
-          <div className={`border-b-2 border-slate-900 ${compactLayout ? 'pb-2.5' : 'pb-4'}`}>
+          <div data-pdf-block="true" className={`border-b-2 border-slate-900 ${compactLayout ? 'pb-2.5' : 'pb-4'}`}>
             {(editSchoolName.trim() || editExamLabel.trim()) && (
               <div className={`text-center border-b border-slate-200 ${compactLayout ? 'mb-2 pb-1.5' : 'mb-3 pb-2.5'}`}>
                 {editSchoolName.trim() && (
@@ -423,42 +564,52 @@ export function PrintablePaperModal({
         {/* Question 1: Objective MCQs (SECTION — A) */}
         {questions.length > 0 && (
           <section className={compactLayout ? 'space-y-2' : 'space-y-4'}>
-            {paperStyle === 'fbise_official' ? (
-              <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
-                  SECTION — A · Question {mcqQuestionNum} (Objective / MCQs)
-                </h2>
-                <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
-                  Marks: {mcqTotalMarks} ({questions.length} × {marksPerQuestion})
-                </span>
-              </div>
-            ) : (
-              <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
-                <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
-                  Question {mcqQuestionNum}: Multiple Choice Questions (Objective)
-                </h2>
-                <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
-                  ({questions.length} × {marksPerQuestion} = {mcqTotalMarks} Marks)
-                </span>
-              </div>
-            )}
-            <p className="text-[11px] font-semibold text-slate-700 leading-snug">
-              {paperStyle === 'fbise_official'
-                ? 'Note: Section-A is compulsory. Answer all parts by filling/selecting the correct option (A, B, C, or D). Deleting or overwriting is not allowed.'
-                : 'Note: Choose the correct option (A, B, C, or D) for each statement below.'}
-            </p>
-            <ol className={compactLayout ? 'space-y-1.5' : 'space-y-3 print:space-y-2.5'}>
+            <div data-pdf-block="true" data-pdf-keep-with-next="true" className="space-y-1.5">
+              {paperStyle === 'fbise_official' ? (
+                <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
+                    SECTION — A · Question {mcqQuestionNum} (Objective / MCQs)
+                  </h2>
+                  <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
+                    Marks: {mcqTotalMarks} ({questions.length} × {marksPerQuestion})
+                  </span>
+                </div>
+              ) : (
+                <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
+                  <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
+                    Question {mcqQuestionNum}: Multiple Choice Questions (Objective)
+                  </h2>
+                  <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
+                    ({questions.length} × {marksPerQuestion} = {mcqTotalMarks} Marks)
+                  </span>
+                </div>
+              )}
+              <p className="text-[11px] font-semibold text-slate-700 leading-snug">
+                {paperStyle === 'fbise_official'
+                  ? 'Note: Section-A is compulsory. Answer all parts by filling/selecting the correct option (A, B, C, or D). Deleting or overwriting is not allowed.'
+                  : 'Note: Choose the correct option (A, B, C, or D) for each statement below.'}
+              </p>
+            </div>
+            <ol
+              className={
+                twoColumnMcqs
+                  ? `grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-x-5 ${compactLayout ? 'gap-y-1.5' : 'gap-y-3'}`
+                  : compactLayout
+                    ? 'space-y-1'
+                    : 'space-y-3 print:space-y-2.5'
+              }
+            >
               {questions.map((q, idx) => (
-                <li key={idx} className="break-inside-avoid">
-                  <p className={`${compactLayout ? 'text-[13px] leading-snug mb-0.5' : 'text-sm leading-snug mb-1.5'} font-medium text-slate-900`}>
-                    <span className="font-mono font-semibold mr-1.5 tabular-nums">{idx + 1}.</span>
+                <li key={idx} data-pdf-block="true" className="break-inside-avoid">
+                  <p className={`${compactLayout ? 'text-[11.5px] leading-snug mb-0.5' : 'text-sm leading-snug mb-1.5'} font-medium text-slate-900`}>
+                    <span className="font-mono font-semibold mr-1 tabular-nums">{idx + 1}.</span>
                     {q.prompt}
                   </p>
-                  <div className={`grid grid-cols-2 print:grid-cols-2 gap-x-5 ${compactLayout ? 'gap-y-0.5 pl-5 text-[12px]' : 'gap-y-1 pl-6 text-sm'} text-slate-800`}>
+                  <div className={`grid grid-cols-2 print:grid-cols-2 gap-x-4 ${compactLayout ? 'gap-y-0 pl-4 text-[11px]' : 'gap-y-1 pl-6 text-sm'} text-slate-800`}>
                     {q.options.map((opt, optIdx) => {
                       const letter = String.fromCharCode(65 + optIdx);
                       return (
-                        <div key={optIdx} className="leading-snug">
+                        <div key={optIdx} className="leading-tight">
                           <span className="font-mono font-semibold mr-1">({letter})</span>
                           {opt}
                         </div>
@@ -475,7 +626,7 @@ export function PrintablePaperModal({
           separateSectionA &&
           questions.length > 0 &&
           (shortQuestions.length > 0 || longQuestions.length > 0) && (
-            <div className="break-before-page border-y-2 border-slate-900 py-1.5 px-2.5 flex items-center justify-between bg-slate-100 text-xs font-bold uppercase text-slate-950">
+            <div data-pdf-page-break="true" data-pdf-keep-with-next="true" className="break-before-page border-y-2 border-slate-900 py-1.5 px-2.5 flex items-center justify-between bg-slate-100 text-xs font-bold uppercase text-slate-950">
               <span>{editTitle.trim() || title} — Subjective Part (Sections B &amp; C)</span>
               <span className="font-mono tabular-nums">
                 Subjective Marks: {Math.round((shortTotalMarks + longTotalMarks) * 100) / 100}
@@ -486,119 +637,179 @@ export function PrintablePaperModal({
         {/* Question 2: Short Answer Questions (SECTION — B) */}
         {shortQuestions.length > 0 && (
           <section className={compactLayout ? 'space-y-2' : 'space-y-4'}>
-            {paperStyle === 'fbise_official' ? (
-              <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
-                  SECTION — B · Question {shortQuestionNum} (Short Response Questions)
-                </h2>
-                <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
-                  Marks: {shortTotalMarks} ({shortQuestions.length} Parts)
-                </span>
+            <div data-pdf-block="true" data-pdf-keep-with-next="true" className="space-y-1.5">
+              {paperStyle === 'fbise_official' ? (
+                <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
+                    SECTION — B · Question {shortQuestionNum} (Short Response Questions)
+                  </h2>
+                  <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
+                    Marks: {shortTotalMarks} ({shortQuestions.length} Parts)
+                  </span>
+                </div>
+              ) : (
+                <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
+                  <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
+                    Question {shortQuestionNum}: Short Answer Questions
+                  </h2>
+                  <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
+                    ({shortQuestions.length} Parts · {shortTotalMarks} Marks)
+                  </span>
+                </div>
+              )}
+              <p className="text-[11px] font-semibold text-slate-700">
+                {editShortChoiceNote.trim()
+                  ? `Note: ${editShortChoiceNote.trim()}`
+                  : hasShortOr
+                    ? 'Note: Write concise answers. Where "OR" is given, attempt either the first question or the alternative question.'
+                    : 'Note: Write concise, to-the-point answers for the short questions below.'}
+              </p>
+            </div>
+            {sideBySideOr && hasShortOr ? (
+              <div className="border-t border-slate-300 divide-y divide-slate-300">
+                {shortQuestions.map((sq, idx) => (
+                  <div
+                    key={idx}
+                    data-pdf-block="true"
+                    className={`break-inside-avoid grid grid-cols-[1fr_2.2rem_1fr] items-stretch ${
+                      compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'
+                    }`}
+                  >
+                    <div className={`${compactLayout ? 'py-1 pr-2' : 'py-2 pr-3'} font-medium text-slate-900`}>
+                      <span className="font-mono font-semibold mr-1 tabular-nums">{idx + 1}.</span>
+                      {sq.prompt}
+                    </div>
+                    <div className="border-x border-slate-300 flex items-center justify-center bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-600 px-1">
+                      {sq.orPrompt?.trim() ? 'OR' : '—'}
+                    </div>
+                    <div className={`${compactLayout ? 'py-1 pl-2' : 'py-2 pl-3'} flex items-start justify-between gap-2 font-medium text-slate-900`}>
+                      <span className="flex-1">{sq.orPrompt?.trim() || ''}</span>
+                      <span className="text-[11px] font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
+                        [{sq.marks}]
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
-              <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
-                <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
-                  Question {shortQuestionNum}: Short Answer Questions
-                </h2>
-                <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
-                  ({shortQuestions.length} Parts · {shortTotalMarks} Marks)
-                </span>
-              </div>
+              <ol className={compactLayout ? 'space-y-1.5' : 'space-y-4'}>
+                {shortQuestions.map((sq, idx) => (
+                  <li key={idx} data-pdf-block="true" className="break-inside-avoid flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-1">
+                      <p className={`${compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900`}>
+                        <span className="font-mono font-semibold mr-1.5 tabular-nums">{idx + 1}.</span>
+                        {sq.prompt}
+                      </p>
+                      {sq.orPrompt?.trim() && (
+                        <>
+                          <div className="pl-5 text-[10px] font-bold uppercase tracking-widest text-slate-700">
+                            — OR —
+                          </div>
+                          <p className={`${compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900 pl-5`}>
+                            {sq.orPrompt.trim()}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
+                      [{sq.marks} Marks]
+                    </span>
+                  </li>
+                ))}
+              </ol>
             )}
-            <p className="text-[11px] font-semibold text-slate-700">
-              {editShortChoiceNote.trim()
-                ? `Note: ${editShortChoiceNote.trim()}`
-                : hasShortOr
-                  ? 'Note: Write concise answers. Where "OR" is given, attempt either the first question or the alternative question.'
-                  : 'Note: Write concise, to-the-point answers for the short questions below.'}
-            </p>
-            <ol className={compactLayout ? 'space-y-2' : 'space-y-4'}>
-              {shortQuestions.map((sq, idx) => (
-                <li key={idx} className="break-inside-avoid flex items-start justify-between gap-4">
-                  <div className="flex-1 space-y-1">
-                    <p className={`${compactLayout ? 'text-[13px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900`}>
-                      <span className="font-mono font-semibold mr-1.5 tabular-nums">{idx + 1}.</span>
-                      {sq.prompt}
-                    </p>
-                    {sq.orPrompt?.trim() && (
-                      <>
-                        <div className="pl-5 text-[10px] font-bold uppercase tracking-widest text-slate-700">
-                          — OR —
-                        </div>
-                        <p className={`${compactLayout ? 'text-[13px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900 pl-5`}>
-                          {sq.orPrompt.trim()}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
-                    [{sq.marks} Marks]
-                  </span>
-                </li>
-              ))}
-            </ol>
           </section>
         )}
 
         {/* Question 3: Long / Descriptive Questions (SECTION — C) */}
         {longQuestions.length > 0 && (
           <section className={compactLayout ? 'space-y-2.5' : 'space-y-4'}>
-            {paperStyle === 'fbise_official' ? (
-              <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
-                  SECTION — C · Question {longQuestionNum} (Extended / Long Questions)
-                </h2>
-                <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
-                  Marks: {longTotalMarks} ({longQuestions.length} {longQuestions.length === 1 ? 'Question' : 'Questions'})
-                </span>
+            <div data-pdf-block="true" data-pdf-keep-with-next="true" className="space-y-1.5">
+              {paperStyle === 'fbise_official' ? (
+                <div className="bg-slate-100 border-y-2 border-slate-900 px-2.5 py-1 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-950">
+                    SECTION — C · Question {longQuestionNum} (Extended / Long Questions)
+                  </h2>
+                  <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
+                    Marks: {longTotalMarks} ({longQuestions.length} {longQuestions.length === 1 ? 'Question' : 'Questions'})
+                  </span>
+                </div>
+              ) : (
+                <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
+                  <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
+                    Question {longQuestionNum}: Long / Descriptive Questions
+                  </h2>
+                  <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
+                    ({longQuestions.length} {longQuestions.length === 1 ? 'Part' : 'Parts'} · {longTotalMarks} Marks)
+                  </span>
+                </div>
+              )}
+              <p className="text-[11px] font-semibold text-slate-700">
+                {editLongChoiceNote.trim()
+                  ? `Note: ${editLongChoiceNote.trim()}`
+                  : hasLongOr
+                    ? 'Note: Write detailed answers. Where "OR" is given, attempt either the first question or the alternative question.'
+                    : 'Note: Attempt detailed answers with diagrams, equations, or headings where applicable.'}
+              </p>
+            </div>
+            {sideBySideOr && hasLongOr ? (
+              <div className="border-t border-slate-300 divide-y divide-slate-300">
+                {longQuestions.map((lq, idx) => (
+                  <div
+                    key={idx}
+                    data-pdf-block="true"
+                    className={`break-inside-avoid grid grid-cols-[1fr_2.2rem_1fr] items-stretch ${
+                      compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'
+                    }`}
+                  >
+                    <div className={`${compactLayout ? 'py-1.5 pr-2' : 'py-2.5 pr-3'} font-medium text-slate-900`}>
+                      <span className="font-mono font-semibold mr-1 tabular-nums">{idx + 1}.</span>
+                      {lq.prompt}
+                    </div>
+                    <div className="border-x border-slate-300 flex items-center justify-center bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-600 px-1">
+                      {lq.orPrompt?.trim() ? 'OR' : '—'}
+                    </div>
+                    <div className={`${compactLayout ? 'py-1.5 pl-2' : 'py-2.5 pl-3'} flex items-start justify-between gap-2 font-medium text-slate-900`}>
+                      <span className="flex-1">{lq.orPrompt?.trim() || ''}</span>
+                      <span className="text-[11px] font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
+                        [{lq.marks}]
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
-              <div className={`flex items-baseline justify-between border-b border-slate-300 ${compactLayout ? 'pb-1' : 'pb-2'}`}>
-                <h2 className={`font-display font-bold uppercase tracking-wide text-slate-900 ${compactLayout ? 'text-sm' : 'text-base'}`}>
-                  Question {longQuestionNum}: Long / Descriptive Questions
-                </h2>
-                <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
-                  ({longQuestions.length} {longQuestions.length === 1 ? 'Part' : 'Parts'} · {longTotalMarks} Marks)
-                </span>
-              </div>
+              <ol className={compactLayout ? 'space-y-1.5' : 'space-y-5'}>
+                {longQuestions.map((lq, idx) => (
+                  <li key={idx} data-pdf-block="true" className="break-inside-avoid flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-1">
+                      <p className={`${compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900`}>
+                        <span className="font-mono font-semibold mr-1.5 tabular-nums">{idx + 1}.</span>
+                        {lq.prompt}
+                      </p>
+                      {lq.orPrompt?.trim() && (
+                        <>
+                          <div className="pl-5 text-[10px] font-bold uppercase tracking-widest text-slate-700">
+                            — OR —
+                          </div>
+                          <p className={`${compactLayout ? 'text-[11.5px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900 pl-5`}>
+                            {lq.orPrompt.trim()}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
+                      [{lq.marks} Marks]
+                    </span>
+                  </li>
+                ))}
+              </ol>
             )}
-            <p className="text-[11px] font-semibold text-slate-700">
-              {editLongChoiceNote.trim()
-                ? `Note: ${editLongChoiceNote.trim()}`
-                : hasLongOr
-                  ? 'Note: Write detailed answers. Where "OR" is given, attempt either the first question or the alternative question.'
-                  : 'Note: Attempt detailed answers with diagrams, equations, or headings where applicable.'}
-            </p>
-            <ol className={compactLayout ? 'space-y-2.5' : 'space-y-5'}>
-              {longQuestions.map((lq, idx) => (
-                <li key={idx} className="break-inside-avoid flex items-start justify-between gap-4">
-                  <div className="flex-1 space-y-1">
-                    <p className={`${compactLayout ? 'text-[13px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900`}>
-                      <span className="font-mono font-semibold mr-1.5 tabular-nums">{idx + 1}.</span>
-                      {lq.prompt}
-                    </p>
-                    {lq.orPrompt?.trim() && (
-                      <>
-                        <div className="pl-5 text-[10px] font-bold uppercase tracking-widest text-slate-700">
-                          — OR —
-                        </div>
-                        <p className={`${compactLayout ? 'text-[13px] leading-snug' : 'text-sm leading-relaxed'} font-medium text-slate-900 pl-5`}>
-                          {lq.orPrompt.trim()}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
-                    [{lq.marks} Marks]
-                  </span>
-                </li>
-              ))}
-            </ol>
           </section>
         )}
 
         {/* End of Exam Paper Footer */}
-        <footer className={`${compactLayout ? 'pt-3 mt-5' : 'pt-4 mt-8'} border-t border-slate-400 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 break-inside-avoid`}>
+        <footer data-pdf-block="true" className={`${compactLayout ? 'pt-3 mt-5' : 'pt-4 mt-8'} border-t border-slate-400 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 break-inside-avoid`}>
           <span className="font-semibold uppercase tracking-wider text-slate-600">
             *** End of Question Paper ***
           </span>
@@ -610,13 +821,13 @@ export function PrintablePaperModal({
         </footer>
 
         {includeAnswerKey && (
-          <div className="mt-10 pt-6 border-t-2 border-slate-900 break-before-page space-y-6">
-            <h2 className="font-display text-lg font-bold text-slate-900">
+          <div data-pdf-page-break="true" className="mt-10 pt-6 border-t-2 border-slate-900 break-before-page space-y-6">
+            <h2 data-pdf-block="true" className="font-display text-lg font-bold text-slate-900">
               Answer Key & Marking Scheme — {editTitle.trim() || title}
             </h2>
 
             {questions.length > 0 && (
-              <div>
+              <div data-pdf-block="true">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
                   Question {mcqQuestionNum} — MCQ Answer Key
                 </h3>
@@ -636,7 +847,7 @@ export function PrintablePaperModal({
                   Question {shortQuestionNum} — Short Questions Key Points
                 </h3>
                 {shortQuestions.map((sq, idx) => (
-                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
+                  <div key={idx} data-pdf-block="true" className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
                     <p className="font-semibold text-slate-900">
                       {idx + 1} ({sq.marks} Marks): {sq.prompt}
                     </p>
@@ -660,7 +871,7 @@ export function PrintablePaperModal({
                   Question {longQuestionNum} — Long Questions Solution Outline
                 </h3>
                 {longQuestions.map((lq, idx) => (
-                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
+                  <div key={idx} data-pdf-block="true" className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
                     <p className="font-semibold text-slate-900">
                       {idx + 1} ({lq.marks} Marks): {lq.prompt}
                     </p>
@@ -677,7 +888,7 @@ export function PrintablePaperModal({
                 ))}
               </div>
             )}
-            <footer className="pt-3 mt-6 border-t border-slate-300 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 break-inside-avoid">
+            <footer data-pdf-block="true" className="pt-3 mt-6 border-t border-slate-300 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 break-inside-avoid">
               <span className="font-semibold uppercase tracking-wider text-slate-600">
                 MeritExam · Marking Scheme
               </span>

@@ -172,6 +172,7 @@ service cloud.firestore {
           'id', 'title', 'board', 'schoolName', 'examLabel', 'paperDate', 'grade', 'subject', 'topic', 'difficulty',
           'durationMinutes', 'questionCount', 'marksPerQuestion', 'questions',
           'shortQuestionCount', 'longQuestionCount', 'shortQuestions', 'longQuestions',
+          'shortChoiceNote', 'longChoiceNote',
           'deliveryMode', 'isActive', 'scheduledReleaseAt', 'createdBy', 'createdByName',
           'createdByRole', 'createdAt', 'updatedAt'
         ]) &&
@@ -191,10 +192,12 @@ service cloud.firestore {
         data.questions is list && data.questions.size() >= 0 && data.questions.size() <= 200 &&
         data.questions.size() == data.questionCount &&
         (data.questions.size() == 0 || data.questions[0] is map) &&
-        (!('shortQuestionCount' in data) || (data.shortQuestionCount is int && data.shortQuestionCount >= 0 && data.shortQuestionCount <= 30)) &&
-        (!('longQuestionCount' in data) || (data.longQuestionCount is int && data.longQuestionCount >= 0 && data.longQuestionCount <= 15)) &&
-        (!('shortQuestions' in data) || (data.shortQuestions is list && data.shortQuestions.size() <= 30 && (data.shortQuestions.size() == 0 || data.shortQuestions[0] is map))) &&
-        (!('longQuestions' in data) || (data.longQuestions is list && data.longQuestions.size() <= 15 && (data.longQuestions.size() == 0 || data.longQuestions[0] is map))) &&
+        (!('shortQuestionCount' in data) || (data.shortQuestionCount is int && data.shortQuestionCount >= 0 && data.shortQuestionCount <= 50)) &&
+        (!('longQuestionCount' in data) || (data.longQuestionCount is int && data.longQuestionCount >= 0 && data.longQuestionCount <= 25)) &&
+        (!('shortQuestions' in data) || (data.shortQuestions is list && data.shortQuestions.size() <= 50 && (data.shortQuestions.size() == 0 || data.shortQuestions[0] is map))) &&
+        (!('longQuestions' in data) || (data.longQuestions is list && data.longQuestions.size() <= 25 && (data.longQuestions.size() == 0 || data.longQuestions[0] is map))) &&
+        (!('shortChoiceNote' in data) || (data.shortChoiceNote is string && data.shortChoiceNote.size() <= 200)) &&
+        (!('longChoiceNote' in data) || (data.longChoiceNote is string && data.longChoiceNote.size() <= 200)) &&
         (data.questionCount + (('shortQuestions' in data) ? data.shortQuestions.size() : 0) + (('longQuestions' in data) ? data.longQuestions.size() : 0)) >= 1 &&
         data.deliveryMode in ['inherit', 'instant', 'admin_review'] &&
         data.isActive is bool &&
@@ -232,13 +235,13 @@ service cloud.firestore {
         data.studentIdentifier is string && data.studentIdentifier.size() <= 64 &&
         data.answers is list && data.answers.size() >= 0 && data.answers.size() <= 200 &&
         (data.answers.size() == 0 || data.answers[0] is int) &&
-        (!('shortAnswers' in data) || (data.shortAnswers is list && data.shortAnswers.size() <= 30 && (data.shortAnswers.size() == 0 || data.shortAnswers[0] is string))) &&
-        (!('longAnswers' in data) || (data.longAnswers is list && data.longAnswers.size() <= 15 && (data.longAnswers.size() == 0 || data.longAnswers[0] is string))) &&
+        (!('shortAnswers' in data) || (data.shortAnswers is list && data.shortAnswers.size() <= 50 && (data.shortAnswers.size() == 0 || data.shortAnswers[0] is string))) &&
+        (!('longAnswers' in data) || (data.longAnswers is list && data.longAnswers.size() <= 25 && (data.longAnswers.size() == 0 || data.longAnswers[0] is string))) &&
         data.score is int && data.score >= 0 && data.score <= 200 &&
         data.totalQuestions is int && data.totalQuestions >= 0 && data.totalQuestions <= 200 &&
         (!('marksPerQuestion' in data) || (data.marksPerQuestion is number && data.marksPerQuestion >= 0.25 && data.marksPerQuestion <= 10)) &&
-        (!('obtainedMarks' in data) || (data.obtainedMarks is number && data.obtainedMarks >= 0 && data.obtainedMarks <= 2000)) &&
-        (!('totalMarks' in data) || (data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 2000)) &&
+        (!('obtainedMarks' in data) || (data.obtainedMarks is number && data.obtainedMarks >= 0 && data.obtainedMarks <= 5000)) &&
+        (!('totalMarks' in data) || (data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 5000)) &&
         data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
         data.deliveryModeUsed in ['instant', 'admin_review'] &&
         data.resultReleased is bool &&
@@ -359,7 +362,7 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly([
               'title', 'board', 'schoolName', 'examLabel', 'paperDate', 'topic', 'difficulty', 'durationMinutes', 'questionCount',
               'marksPerQuestion', 'questions', 'shortQuestionCount', 'longQuestionCount',
-              'shortQuestions', 'longQuestions', 'isActive', 'scheduledReleaseAt', 'updatedAt'
+              'shortQuestions', 'longQuestions', 'shortChoiceNote', 'longChoiceNote', 'isActive', 'scheduledReleaseAt', 'updatedAt'
             ])
           )
         );

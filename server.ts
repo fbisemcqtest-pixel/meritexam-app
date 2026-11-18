@@ -141,6 +141,8 @@ interface GeneratedSubjectiveQuestion {
   suggestedAnswer: string;
   marks: number;
   topicTag: string;
+  orPrompt?: string;
+  orSuggestedAnswer?: string;
 }
 
 function getGenAIClient() {
@@ -183,13 +185,16 @@ async function startServer() {
 
       const rawShortCount = Number(body.shortQuestionCount);
       const shortQuestionCount = Number.isInteger(rawShortCount)
-        ? Math.min(Math.max(rawShortCount, 0), 20)
+        ? Math.min(Math.max(rawShortCount, 0), 25)
         : 0;
 
       const rawLongCount = Number(body.longQuestionCount);
       const longQuestionCount = Number.isInteger(rawLongCount)
-        ? Math.min(Math.max(rawLongCount, 0), 10)
+        ? Math.min(Math.max(rawLongCount, 0), 15)
         : 0;
+
+      const includeShortOr = body.includeShortOr === true;
+      const includeLongOr = body.includeLongOr === true;
 
       const rawShortMarks = Number(body.shortMarks);
       const shortMarks = Number.isFinite(rawShortMarks) && rawShortMarks >= 1 && rawShortMarks <= 10
@@ -300,7 +305,9 @@ async function startServer() {
 
       if (shortQuestionCount > 0) {
         sectionRequirements.push(
-          `- "shortQuestions": Generate exactly ${shortQuestionCount} ${boardShortName} Short Answer Questions (${shortMarks} marks each, concise 3–5 line textbook answer expected), with a clear "prompt", concise marking-scheme "suggestedAnswer", and "topicTag".`,
+          includeShortOr
+            ? `- "shortQuestions": Generate exactly ${shortQuestionCount} ${boardShortName} Short Answer Questions (${shortMarks} marks each, concise 3–5 line textbook answer expected). For EVERY short question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
+            : `- "shortQuestions": Generate exactly ${shortQuestionCount} ${boardShortName} Short Answer Questions (${shortMarks} marks each, concise 3–5 line textbook answer expected), with a clear "prompt", concise marking-scheme "suggestedAnswer", and "topicTag".`,
         );
       } else {
         sectionRequirements.push('- "shortQuestions": Return an empty array [].');
@@ -308,7 +315,9 @@ async function startServer() {
 
       if (longQuestionCount > 0) {
         sectionRequirements.push(
-          `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
+          includeLongOr
+            ? `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question). For EVERY long question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
+            : `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
         );
       } else {
         sectionRequirements.push('- "longQuestions": Return an empty array [].');
@@ -338,7 +347,7 @@ async function startServer() {
         ? 'You are a senior Punjab Board (BISE Lahore / Rawalpindi) paper setter specializing in Punjab Textbook Board (PTB / PCTB) textbooks across Sciences, Compulsory subjects, and Arts/Humanities for 9th, 10th, 1st Year (11th), and 2nd Year (12th). Return strictly valid JSON matching the schema.'
         : 'You are a senior Federal Board (FBISE, Islamabad) paper setter specializing in National Book Foundation (NBF) SLO-based textbooks across Sciences, Compulsory subjects, and Arts/Humanities for 9th (SSC-I), 10th (SSC-II), 1st Year / 1st A (HSSC-I), and 2nd Year (HSSC-II). Return strictly valid JSON matching the schema.';
 
-      const modelsToTry = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
+      const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'] as const;
       let response;
       let lastApiErr: unknown = null;
       for (const modelName of modelsToTry) {
@@ -404,12 +413,26 @@ async function startServer() {
                           type: Type.STRING,
                           description: 'Concise model answer / rubric (3-5 lines).',
                         },
+                        ...(includeShortOr
+                          ? {
+                              orPrompt: {
+                                type: Type.STRING,
+                                description: 'Distinct alternative OR short question prompt.',
+                              },
+                              orSuggestedAnswer: {
+                                type: Type.STRING,
+                                description: 'Concise model answer for the OR alternative short question.',
+                              },
+                            }
+                          : {}),
                         topicTag: {
                           type: Type.STRING,
                           description: 'Chapter or topic name.',
                         },
                       },
-                      required: ['prompt', 'suggestedAnswer', 'topicTag'],
+                      required: includeShortOr
+                        ? ['prompt', 'suggestedAnswer', 'orPrompt', 'orSuggestedAnswer', 'topicTag']
+                        : ['prompt', 'suggestedAnswer', 'topicTag'],
                     },
                   },
                   longQuestions: {
@@ -425,12 +448,26 @@ async function startServer() {
                           type: Type.STRING,
                           description: 'Structured key points / solution outline.',
                         },
+                        ...(includeLongOr
+                          ? {
+                              orPrompt: {
+                                type: Type.STRING,
+                                description: 'Distinct alternative OR long/descriptive question prompt.',
+                              },
+                              orSuggestedAnswer: {
+                                type: Type.STRING,
+                                description: 'Structured key points for the OR alternative long question.',
+                              },
+                            }
+                          : {}),
                         topicTag: {
                           type: Type.STRING,
                           description: 'Chapter or topic name.',
                         },
                       },
-                      required: ['prompt', 'suggestedAnswer', 'topicTag'],
+                      required: includeLongOr
+                        ? ['prompt', 'suggestedAnswer', 'orPrompt', 'orSuggestedAnswer', 'topicTag']
+                        : ['prompt', 'suggestedAnswer', 'topicTag'],
                     },
                   },
                 },
@@ -450,9 +487,12 @@ async function startServer() {
             if (isQuotaOrRate) {
               break;
             }
-            if (attempt === 0 && isTransient) {
-              await new Promise((r) => setTimeout(r, 800));
-              continue;
+            if (isTransient) {
+              if (modelName === 'gemini-3.1-flash-lite' && attempt === 0) {
+                await new Promise((r) => setTimeout(r, 500));
+                continue;
+              }
+              break;
             }
             throw apiErr;
           }
@@ -468,7 +508,10 @@ async function startServer() {
           });
           return;
         }
-        res.status(503).json({ error: 'Paper generator is temporarily busy. Please try again in a moment.' });
+        res.status(503).json({
+          error:
+            'Google AI servers are temporarily busy (high demand). Please wait 15–30 seconds and click Generate again, or add questions manually below.',
+        });
         return;
       }
 
@@ -490,11 +533,15 @@ async function startServer() {
         shortQuestions?: Array<{
           prompt?: string;
           suggestedAnswer?: string;
+          orPrompt?: string;
+          orSuggestedAnswer?: string;
           topicTag?: string;
         }>;
         longQuestions?: Array<{
           prompt?: string;
           suggestedAnswer?: string;
+          orPrompt?: string;
+          orSuggestedAnswer?: string;
           topicTag?: string;
         }>;
       };
@@ -527,24 +574,40 @@ async function startServer() {
         ? (parsed.shortQuestions ?? [])
             .slice(0, shortQuestionCount)
             .filter((q) => typeof q.prompt === 'string' && q.prompt.trim().length > 0)
-            .map((q) => ({
-              prompt: String(q.prompt).trim().slice(0, 800),
-              suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to NBF textbook explanation.').trim().slice(0, 1200),
-              marks: shortMarks,
-              topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
-            }))
+            .map((q) => {
+              const orPrompt = typeof q.orPrompt === 'string' ? q.orPrompt.trim().slice(0, 800) : '';
+              const orSuggestedAnswer = typeof q.orSuggestedAnswer === 'string'
+                ? q.orSuggestedAnswer.trim().slice(0, 1200)
+                : '';
+              return {
+                prompt: String(q.prompt).trim().slice(0, 800),
+                suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to textbook explanation.').trim().slice(0, 1200),
+                marks: shortMarks,
+                topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
+                ...(orPrompt ? { orPrompt } : {}),
+                ...(orPrompt && orSuggestedAnswer ? { orSuggestedAnswer } : {}),
+              };
+            })
         : [];
 
       const sanitizedLongQuestions: GeneratedSubjectiveQuestion[] = longQuestionCount > 0
         ? (parsed.longQuestions ?? [])
             .slice(0, longQuestionCount)
             .filter((q) => typeof q.prompt === 'string' && q.prompt.trim().length > 0)
-            .map((q) => ({
-              prompt: String(q.prompt).trim().slice(0, 1200),
-              suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to NBF textbook detailed answer.').trim().slice(0, 2400),
-              marks: longMarks,
-              topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
-            }))
+            .map((q) => {
+              const orPrompt = typeof q.orPrompt === 'string' ? q.orPrompt.trim().slice(0, 1200) : '';
+              const orSuggestedAnswer = typeof q.orSuggestedAnswer === 'string'
+                ? q.orSuggestedAnswer.trim().slice(0, 2400)
+                : '';
+              return {
+                prompt: String(q.prompt).trim().slice(0, 1200),
+                suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to textbook detailed answer.').trim().slice(0, 2400),
+                marks: longMarks,
+                topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
+                ...(orPrompt ? { orPrompt } : {}),
+                ...(orPrompt && orSuggestedAnswer ? { orSuggestedAnswer } : {}),
+              };
+            })
         : [];
 
       if (

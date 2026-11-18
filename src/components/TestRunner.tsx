@@ -393,29 +393,45 @@ export function TestRunner({
           {shortQuestions.length > 0 && (
             <div className="space-y-4">
               <h2 className="font-display text-sm font-bold uppercase tracking-wider text-teal-800">
-                Section B — Short Answer Questions
+                Question {hasMcqs ? 2 : 1} — Short Answer Questions
               </h2>
               {shortQuestions.map((sq, idx) => (
                 <div key={idx} className="bg-white border border-teal-200 rounded-xl p-6 space-y-3">
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-xs font-semibold text-teal-800 tabular-nums">
-                      Short Question {idx + 1} · {sq.topicTag}
+                      Part {idx + 1} · {sq.topicTag}
                     </span>
                     <span className="text-xs font-mono font-semibold text-slate-600">
                       [{sq.marks} Marks]
                     </span>
                   </div>
                   <p className="text-base font-medium text-slate-900">{sq.prompt}</p>
+                  {sq.orPrompt?.trim() && (
+                    <div className="pt-1 border-t border-teal-100">
+                      <span className="text-[11px] font-bold uppercase tracking-widest text-teal-700">OR</span>
+                      <p className="text-base font-medium text-slate-900 mt-0.5">{sq.orPrompt.trim()}</p>
+                    </div>
+                  )}
                   <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-sm text-slate-800">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 block mb-1">
                       Your Answer
                     </span>
                     {(submittedAttempt.shortAnswers?.[idx] || '').trim() || 'No written answer submitted.'}
                   </div>
-                  {sq.suggestedAnswer && (
-                    <div className="bg-teal-50/70 border border-teal-200 rounded-lg px-3.5 py-2.5 text-xs text-teal-950">
-                      <span className="font-semibold block mb-1">Model Answer / Key Points:</span>
-                      {sq.suggestedAnswer}
+                  {(sq.suggestedAnswer || sq.orSuggestedAnswer) && (
+                    <div className="bg-teal-50/70 border border-teal-200 rounded-lg px-3.5 py-2.5 text-xs text-teal-950 space-y-1.5">
+                      {sq.suggestedAnswer && (
+                        <div>
+                          <span className="font-semibold block mb-0.5">Model Answer / Key Points:</span>
+                          {sq.suggestedAnswer}
+                        </div>
+                      )}
+                      {sq.orSuggestedAnswer?.trim() && (
+                        <div className="pt-1 border-t border-teal-200/70">
+                          <span className="font-semibold block mb-0.5">OR Alternative Model Answer:</span>
+                          {sq.orSuggestedAnswer.trim()}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -427,29 +443,45 @@ export function TestRunner({
           {longQuestions.length > 0 && (
             <div className="space-y-4">
               <h2 className="font-display text-sm font-bold uppercase tracking-wider text-indigo-800">
-                Section C — Long / Descriptive Questions
+                Question {(hasMcqs ? 1 : 0) + (shortQuestions.length > 0 ? 1 : 0) + 1} — Long / Descriptive Questions
               </h2>
               {longQuestions.map((lq, idx) => (
                 <div key={idx} className="bg-white border border-indigo-200 rounded-xl p-6 space-y-3">
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-xs font-semibold text-indigo-800 tabular-nums">
-                      Long Question {idx + 1} · {lq.topicTag}
+                      Part {idx + 1} · {lq.topicTag}
                     </span>
                     <span className="text-xs font-mono font-semibold text-slate-600">
                       [{lq.marks} Marks]
                     </span>
                   </div>
                   <p className="text-base font-medium text-slate-900">{lq.prompt}</p>
+                  {lq.orPrompt?.trim() && (
+                    <div className="pt-1 border-t border-indigo-100">
+                      <span className="text-[11px] font-bold uppercase tracking-widest text-indigo-700">OR</span>
+                      <p className="text-base font-medium text-slate-900 mt-0.5">{lq.orPrompt.trim()}</p>
+                    </div>
+                  )}
                   <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-sm text-slate-800 whitespace-pre-line">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 block mb-1">
                       Your Answer
                     </span>
                     {(submittedAttempt.longAnswers?.[idx] || '').trim() || 'No written answer submitted.'}
                   </div>
-                  {lq.suggestedAnswer && (
-                    <div className="bg-indigo-50/70 border border-indigo-200 rounded-lg px-3.5 py-2.5 text-xs text-indigo-950 whitespace-pre-line">
-                      <span className="font-semibold block mb-1">Solution Outline / Marking Points:</span>
-                      {lq.suggestedAnswer}
+                  {(lq.suggestedAnswer || lq.orSuggestedAnswer) && (
+                    <div className="bg-indigo-50/70 border border-indigo-200 rounded-lg px-3.5 py-2.5 text-xs text-indigo-950 whitespace-pre-line space-y-1.5">
+                      {lq.suggestedAnswer && (
+                        <div>
+                          <span className="font-semibold block mb-0.5">Solution Outline / Marking Points:</span>
+                          {lq.suggestedAnswer}
+                        </div>
+                      )}
+                      {lq.orSuggestedAnswer?.trim() && (
+                        <div className="pt-1 border-t border-indigo-200/70">
+                          <span className="font-semibold block mb-0.5">OR Alternative Solution Outline:</span>
+                          {lq.orSuggestedAnswer.trim()}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -665,23 +697,40 @@ export function TestRunner({
         {/* Section B: Short Questions */}
         {shortQuestions.length > 0 && (
           <section className="bg-white border border-teal-200 rounded-xl p-6 sm:p-8 space-y-5">
-            <div className="pb-3 border-b border-slate-200 flex items-baseline justify-between gap-4">
-              <h2 className="font-display text-lg font-bold text-teal-900">
-                {hasMcqs ? 'Section B' : 'Section A'} — Short Answer Questions ({shortQuestions.length})
-              </h2>
-              <span className="text-xs font-mono text-slate-500">
-                {shortAnsweredCount} / {shortQuestions.length} answered
-              </span>
+            <div className="pb-3 border-b border-slate-200 space-y-1">
+              <div className="flex items-baseline justify-between gap-4">
+                <h2 className="font-display text-lg font-bold text-teal-900">
+                  Question {hasMcqs ? 2 : 1} — Short Answer Questions ({shortQuestions.length})
+                </h2>
+                <span className="text-xs font-mono text-slate-500">
+                  {shortAnsweredCount} / {shortQuestions.length} answered
+                </span>
+              </div>
+              {test.shortChoiceNote && (
+                <p className="text-xs font-semibold text-teal-800">{test.shortChoiceNote}</p>
+              )}
             </div>
 
             <div className="space-y-5">
               {shortQuestions.map((sq, idx) => (
                 <div key={idx} className="space-y-2">
                   <div className="flex items-baseline justify-between gap-4">
-                    <p className="text-sm sm:text-base font-medium text-slate-900">
-                      <span className="font-mono font-semibold mr-2">Q{idx + 1}.</span>
-                      {sq.prompt}
-                    </p>
+                    <div className="flex-1 space-y-1">
+                      <p className="text-sm sm:text-base font-medium text-slate-900">
+                        <span className="font-mono font-semibold mr-2">{idx + 1}.</span>
+                        {sq.prompt}
+                      </p>
+                      {sq.orPrompt?.trim() && (
+                        <>
+                          <div className="pl-6 text-[11px] font-bold uppercase tracking-widest text-teal-700">
+                            — OR —
+                          </div>
+                          <p className="text-sm sm:text-base font-medium text-slate-900 pl-6">
+                            {sq.orPrompt.trim()}
+                          </p>
+                        </>
+                      )}
+                    </div>
                     <span className="text-xs font-mono font-semibold text-teal-700 shrink-0">
                       [{sq.marks} Marks]
                     </span>
@@ -694,7 +743,11 @@ export function TestRunner({
                         prev.map((val, i) => (i === idx ? e.target.value : val)),
                       )
                     }
-                    placeholder="Write your concise short answer here..."
+                    placeholder={
+                      sq.orPrompt?.trim()
+                        ? 'Write your concise short answer for either choice...'
+                        : 'Write your concise short answer here...'
+                    }
                     className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600 focus:bg-white"
                   />
                 </div>
@@ -706,28 +759,40 @@ export function TestRunner({
         {/* Section C: Long Questions */}
         {longQuestions.length > 0 && (
           <section className="bg-white border border-indigo-200 rounded-xl p-6 sm:p-8 space-y-5">
-            <div className="pb-3 border-b border-slate-200 flex items-baseline justify-between gap-4">
-              <h2 className="font-display text-lg font-bold text-indigo-900">
-                {hasMcqs && shortQuestions.length > 0
-                  ? 'Section C'
-                  : hasMcqs || shortQuestions.length > 0
-                    ? 'Section B'
-                    : 'Section A'}{' '}
-                — Long / Descriptive Questions ({longQuestions.length})
-              </h2>
-              <span className="text-xs font-mono text-slate-500">
-                {longAnsweredCount} / {longQuestions.length} answered
-              </span>
+            <div className="pb-3 border-b border-slate-200 space-y-1">
+              <div className="flex items-baseline justify-between gap-4">
+                <h2 className="font-display text-lg font-bold text-indigo-900">
+                  Question {(hasMcqs ? 1 : 0) + (shortQuestions.length > 0 ? 1 : 0) + 1} — Long / Descriptive Questions ({longQuestions.length})
+                </h2>
+                <span className="text-xs font-mono text-slate-500">
+                  {longAnsweredCount} / {longQuestions.length} answered
+                </span>
+              </div>
+              {test.longChoiceNote && (
+                <p className="text-xs font-semibold text-indigo-800">{test.longChoiceNote}</p>
+              )}
             </div>
 
             <div className="space-y-6">
               {longQuestions.map((lq, idx) => (
                 <div key={idx} className="space-y-2">
                   <div className="flex items-baseline justify-between gap-4">
-                    <p className="text-sm sm:text-base font-medium text-slate-900">
-                      <span className="font-mono font-semibold mr-2">Q{idx + 1}.</span>
-                      {lq.prompt}
-                    </p>
+                    <div className="flex-1 space-y-1">
+                      <p className="text-sm sm:text-base font-medium text-slate-900">
+                        <span className="font-mono font-semibold mr-2">{idx + 1}.</span>
+                        {lq.prompt}
+                      </p>
+                      {lq.orPrompt?.trim() && (
+                        <>
+                          <div className="pl-6 text-[11px] font-bold uppercase tracking-widest text-indigo-700">
+                            — OR —
+                          </div>
+                          <p className="text-sm sm:text-base font-medium text-slate-900 pl-6">
+                            {lq.orPrompt.trim()}
+                          </p>
+                        </>
+                      )}
+                    </div>
                     <span className="text-xs font-mono font-semibold text-indigo-700 shrink-0">
                       [{lq.marks} Marks]
                     </span>
@@ -740,7 +805,11 @@ export function TestRunner({
                         prev.map((val, i) => (i === idx ? e.target.value : val)),
                       )
                     }
-                    placeholder="Write your detailed answer here..."
+                    placeholder={
+                      lq.orPrompt?.trim()
+                        ? 'Write your detailed answer for either choice...'
+                        : 'Write your detailed answer here...'
+                    }
                     className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
                   />
                 </div>

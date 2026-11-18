@@ -983,6 +983,8 @@ export interface SubjectiveQuestion {
   suggestedAnswer: string;
   marks: number;
   topicTag: string;
+  orPrompt?: string;
+  orSuggestedAnswer?: string;
 }
 
 export interface UserAccount {
@@ -1040,6 +1042,8 @@ export interface MCQTest {
   longQuestionCount?: number;
   shortQuestions?: SubjectiveQuestion[];
   longQuestions?: SubjectiveQuestion[];
+  shortChoiceNote?: string;
+  longChoiceNote?: string;
   deliveryMode: TestDeliveryOverride;
   isActive: boolean;
   scheduledReleaseAt: string;

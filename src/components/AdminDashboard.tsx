@@ -1050,6 +1050,8 @@ export function AdminDashboard() {
           questions={printingTest.questions}
           shortQuestions={printingTest.shortQuestions}
           longQuestions={printingTest.longQuestions}
+          shortChoiceNote={printingTest.shortChoiceNote}
+          longChoiceNote={printingTest.longChoiceNote}
           onClose={() => setPrintingTest(null)}
         />
       )}

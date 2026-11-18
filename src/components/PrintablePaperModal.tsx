@@ -25,6 +25,8 @@ interface PrintablePaperModalProps {
   questions: MCQQuestion[];
   shortQuestions?: SubjectiveQuestion[];
   longQuestions?: SubjectiveQuestion[];
+  shortChoiceNote?: string;
+  longChoiceNote?: string;
   onClose: () => void;
 }
 
@@ -42,6 +44,8 @@ export function PrintablePaperModal({
   questions,
   shortQuestions = [],
   longQuestions = [],
+  shortChoiceNote = '',
+  longChoiceNote = '',
   onClose,
 }: PrintablePaperModalProps) {
   const [includeAnswerKey, setIncludeAnswerKey] = useState(false);
@@ -49,6 +53,15 @@ export function PrintablePaperModal({
   const [editSchoolName, setEditSchoolName] = useState(schoolName);
   const [editExamLabel, setEditExamLabel] = useState(examLabel);
   const [editPaperDate, setEditPaperDate] = useState(paperDate);
+  const [editShortChoiceNote, setEditShortChoiceNote] = useState(shortChoiceNote);
+  const [editLongChoiceNote, setEditLongChoiceNote] = useState(longChoiceNote);
+
+  const mcqQuestionNum = questions.length > 0 ? 1 : 0;
+  const shortQuestionNum = shortQuestions.length > 0 ? mcqQuestionNum + 1 : 0;
+  const longQuestionNum = longQuestions.length > 0 ? (shortQuestionNum || mcqQuestionNum) + 1 : 0;
+
+  const hasShortOr = shortQuestions.some((q) => Boolean(q.orPrompt?.trim()));
+  const hasLongOr = longQuestions.some((q) => Boolean(q.orPrompt?.trim()));
 
   const mcqTotalMarks = Math.round(questions.length * marksPerQuestion * 100) / 100;
   const shortTotalMarks = Math.round(
@@ -175,6 +188,42 @@ export function PrintablePaperModal({
               />
             </div>
           </div>
+
+          {(shortQuestions.length > 0 || longQuestions.length > 0) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {shortQuestions.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                    Short Questions Note / Attempt Instruction
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={editShortChoiceNote}
+                    onChange={(e) => setEditShortChoiceNote(e.target.value)}
+                    placeholder="e.g. Attempt any 6 short questions (or attempt either OR part)."
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+              )}
+              {longQuestions.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                    Long Questions Note / Attempt Instruction
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={editLongChoiceNote}
+                    onChange={(e) => setEditLongChoiceNote(e.target.value)}
+                    placeholder="e.g. Attempt any 3 long questions (each carries equal marks)."
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-semibold text-slate-500">Quick Exam Type:</span>
             {['First Term', 'Second Term', 'Send-Up', 'Pre-Board', 'Monthly Assessment'].map((tag) => (
@@ -253,25 +302,25 @@ export function PrintablePaperModal({
           </div>
         </div>
 
-        {/* Section A: Objective MCQs */}
+        {/* Question 1: Objective MCQs */}
         {questions.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-baseline justify-between border-b border-slate-300 pb-2">
               <h2 className="font-display text-base font-bold uppercase tracking-wide text-slate-900">
-                Section A — Multiple Choice Questions (Objective)
+                Question {mcqQuestionNum}: Multiple Choice Questions (Objective)
               </h2>
               <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
                 ({questions.length} × {marksPerQuestion} = {mcqTotalMarks} Marks)
               </span>
             </div>
             <p className="text-xs font-semibold text-slate-700">
-              Note: Choose the single best option (A, B, C, or D) for each multiple-choice question.
+              Note: Choose the correct option (A, B, C, or D) for each statement below.
             </p>
             <ol className="space-y-3 print:space-y-2.5">
               {questions.map((q, idx) => (
                 <li key={idx} className="break-inside-avoid">
                   <p className="text-sm font-medium text-slate-900 leading-snug mb-1.5">
-                    <span className="font-mono font-semibold mr-2 tabular-nums">Q{idx + 1}.</span>
+                    <span className="font-mono font-semibold mr-2 tabular-nums">{idx + 1}.</span>
                     {q.prompt}
                   </p>
                   <div className="grid grid-cols-2 print:grid-cols-2 gap-x-5 gap-y-1 pl-6 text-sm text-slate-800">
@@ -291,27 +340,43 @@ export function PrintablePaperModal({
           </section>
         )}
 
-        {/* Section B: Short Answer Questions */}
+        {/* Question 2: Short Answer Questions */}
         {shortQuestions.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-baseline justify-between border-b border-slate-300 pb-2">
               <h2 className="font-display text-base font-bold uppercase tracking-wide text-slate-900">
-                {questions.length > 0 ? 'Section B' : 'Section A'} — Short Answer Questions
+                Question {shortQuestionNum}: Short Answer Questions
               </h2>
               <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
-                ({shortQuestions.length} Questions · {shortTotalMarks} Marks)
+                ({shortQuestions.length} Parts · {shortTotalMarks} Marks)
               </span>
             </div>
             <p className="text-xs font-semibold text-slate-700">
-              Note: Write concise, to-the-point answers for all short questions.
+              {editShortChoiceNote.trim()
+                ? `Note: ${editShortChoiceNote.trim()}`
+                : hasShortOr
+                  ? 'Note: Write concise answers. Where "OR" is given, attempt either the first question or the alternative question.'
+                  : 'Note: Write concise, to-the-point answers for the short questions below.'}
             </p>
             <ol className="space-y-4">
               {shortQuestions.map((sq, idx) => (
                 <li key={idx} className="break-inside-avoid flex items-start justify-between gap-4">
-                  <p className="text-sm font-medium text-slate-900 leading-relaxed">
-                    <span className="font-mono font-semibold mr-2 tabular-nums">Q{idx + 1}.</span>
-                    {sq.prompt}
-                  </p>
+                  <div className="flex-1 space-y-1.5">
+                    <p className="text-sm font-medium text-slate-900 leading-relaxed">
+                      <span className="font-mono font-semibold mr-2 tabular-nums">{idx + 1}.</span>
+                      {sq.prompt}
+                    </p>
+                    {sq.orPrompt?.trim() && (
+                      <>
+                        <div className="pl-6 text-[11px] font-bold uppercase tracking-widest text-slate-700">
+                          — OR —
+                        </div>
+                        <p className="text-sm font-medium text-slate-900 leading-relaxed pl-6">
+                          {sq.orPrompt.trim()}
+                        </p>
+                      </>
+                    )}
+                  </div>
                   <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
                     [{sq.marks} Marks]
                   </span>
@@ -321,32 +386,43 @@ export function PrintablePaperModal({
           </section>
         )}
 
-        {/* Section C: Long / Descriptive Questions */}
+        {/* Question 3: Long / Descriptive Questions */}
         {longQuestions.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-baseline justify-between border-b border-slate-300 pb-2">
               <h2 className="font-display text-base font-bold uppercase tracking-wide text-slate-900">
-                {questions.length > 0 && shortQuestions.length > 0
-                  ? 'Section C'
-                  : questions.length > 0 || shortQuestions.length > 0
-                    ? 'Section B'
-                    : 'Section A'}{' '}
-                — Long / Descriptive Questions
+                Question {longQuestionNum}: Long / Descriptive Questions
               </h2>
               <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
-                ({longQuestions.length} {longQuestions.length === 1 ? 'Question' : 'Questions'} · {longTotalMarks} Marks)
+                ({longQuestions.length} {longQuestions.length === 1 ? 'Part' : 'Parts'} · {longTotalMarks} Marks)
               </span>
             </div>
             <p className="text-xs font-semibold text-slate-700">
-              Note: Attempt detailed answers with diagrams, equations, or headings where applicable.
+              {editLongChoiceNote.trim()
+                ? `Note: ${editLongChoiceNote.trim()}`
+                : hasLongOr
+                  ? 'Note: Write detailed answers. Where "OR" is given, attempt either the first question or the alternative question.'
+                  : 'Note: Attempt detailed answers with diagrams, equations, or headings where applicable.'}
             </p>
             <ol className="space-y-5">
               {longQuestions.map((lq, idx) => (
                 <li key={idx} className="break-inside-avoid flex items-start justify-between gap-4">
-                  <p className="text-sm font-medium text-slate-900 leading-relaxed">
-                    <span className="font-mono font-semibold mr-2 tabular-nums">Q{idx + 1}.</span>
-                    {lq.prompt}
-                  </p>
+                  <div className="flex-1 space-y-1.5">
+                    <p className="text-sm font-medium text-slate-900 leading-relaxed">
+                      <span className="font-mono font-semibold mr-2 tabular-nums">{idx + 1}.</span>
+                      {lq.prompt}
+                    </p>
+                    {lq.orPrompt?.trim() && (
+                      <>
+                        <div className="pl-6 text-[11px] font-bold uppercase tracking-widest text-slate-700">
+                          — OR —
+                        </div>
+                        <p className="text-sm font-medium text-slate-900 leading-relaxed pl-6">
+                          {lq.orPrompt.trim()}
+                        </p>
+                      </>
+                    )}
+                  </div>
                   <span className="text-xs font-mono font-semibold text-slate-600 shrink-0 tabular-nums">
                     [{lq.marks} Marks]
                   </span>
@@ -359,18 +435,18 @@ export function PrintablePaperModal({
         {includeAnswerKey && (
           <div className="mt-10 pt-6 border-t-2 border-slate-900 break-before-page space-y-6">
             <h2 className="font-display text-lg font-bold text-slate-900">
-              Answer Key & Marking Scheme — {title}
+              Answer Key & Marking Scheme — {editTitle.trim() || title}
             </h2>
 
             {questions.length > 0 && (
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
-                  MCQ Answer Key
+                  Question {mcqQuestionNum} — MCQ Answer Key
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs font-mono">
                   {questions.map((q, idx) => (
                     <div key={idx} className="p-2 border border-slate-200 rounded">
-                      Q{idx + 1}: <strong>{String.fromCharCode(65 + q.correctIndex)}</strong>
+                      {idx + 1}: <strong>{String.fromCharCode(65 + q.correctIndex)}</strong>
                     </div>
                   ))}
                 </div>
@@ -380,14 +456,22 @@ export function PrintablePaperModal({
             {shortQuestions.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  Short Questions — Key Points
+                  Question {shortQuestionNum} — Short Questions Key Points
                 </h3>
                 {shortQuestions.map((sq, idx) => (
-                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid">
+                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
                     <p className="font-semibold text-slate-900">
-                      Q{idx + 1} ({sq.marks} Marks): {sq.prompt}
+                      {idx + 1} ({sq.marks} Marks): {sq.prompt}
                     </p>
-                    <p className="text-slate-600 mt-1">{sq.suggestedAnswer}</p>
+                    <p className="text-slate-600">{sq.suggestedAnswer}</p>
+                    {sq.orPrompt?.trim() && (
+                      <div className="pt-1 border-t border-slate-200 mt-1">
+                        <p className="font-semibold text-slate-900">OR: {sq.orPrompt.trim()}</p>
+                        {sq.orSuggestedAnswer?.trim() && (
+                          <p className="text-slate-600">{sq.orSuggestedAnswer.trim()}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -396,14 +480,22 @@ export function PrintablePaperModal({
             {longQuestions.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  Long Questions — Solution Outline
+                  Question {longQuestionNum} — Long Questions Solution Outline
                 </h3>
                 {longQuestions.map((lq, idx) => (
-                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid">
+                  <div key={idx} className="text-xs text-slate-800 border-l-2 border-slate-300 pl-3 py-0.5 break-inside-avoid space-y-1">
                     <p className="font-semibold text-slate-900">
-                      Q{idx + 1} ({lq.marks} Marks): {lq.prompt}
+                      {idx + 1} ({lq.marks} Marks): {lq.prompt}
                     </p>
-                    <p className="text-slate-600 mt-1 whitespace-pre-line">{lq.suggestedAnswer}</p>
+                    <p className="text-slate-600 whitespace-pre-line">{lq.suggestedAnswer}</p>
+                    {lq.orPrompt?.trim() && (
+                      <div className="pt-1 border-t border-slate-200 mt-1">
+                        <p className="font-semibold text-slate-900">OR: {lq.orPrompt.trim()}</p>
+                        {lq.orSuggestedAnswer?.trim() && (
+                          <p className="text-slate-600 whitespace-pre-line">{lq.orSuggestedAnswer.trim()}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

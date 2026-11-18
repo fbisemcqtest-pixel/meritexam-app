@@ -59,6 +59,10 @@ export function TestGeneratorPanel({
   const [questionCount, setQuestionCount] = useState<number>(10);
   const [shortQuestionCount, setShortQuestionCount] = useState<number>(0);
   const [longQuestionCount, setLongQuestionCount] = useState<number>(0);
+  const [includeShortOr, setIncludeShortOr] = useState(false);
+  const [includeLongOr, setIncludeLongOr] = useState(false);
+  const [shortChoiceNote, setShortChoiceNote] = useState('');
+  const [longChoiceNote, setLongChoiceNote] = useState('');
   const [marksPerQuestion, setMarksPerQuestion] = useState<number>(1);
   const [marksPerShort, setMarksPerShort] = useState<number>(3);
   const [marksPerLong, setMarksPerLong] = useState<number>(8);
@@ -72,6 +76,7 @@ export function TestGeneratorPanel({
   const [shortQuestions, setShortQuestions] = useState<SubjectiveQuestion[]>([]);
   const [longQuestions, setLongQuestions] = useState<SubjectiveQuestion[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -100,21 +105,33 @@ export function TestGeneratorPanel({
     }
 
     setGenerating(true);
+    setGenerationProgress(null);
     try {
-      const res = await generateMCQsFromServer({
-        board,
-        grade,
-        subject,
-        topic: topic.trim(),
-        selectedChapters: selectedChapters.length > 0 ? selectedChapters : undefined,
-        syllabusChapters: chaptersForSelection,
-        difficulty,
-        questionCount,
-        shortQuestionCount,
-        longQuestionCount,
-        shortMarks: marksPerShort,
-        longMarks: marksPerLong,
-      });
+      const res = await generateMCQsFromServer(
+        {
+          board,
+          grade,
+          subject,
+          topic: topic.trim(),
+          selectedChapters: selectedChapters.length > 0 ? selectedChapters : undefined,
+          syllabusChapters: chaptersForSelection,
+          difficulty,
+          questionCount,
+          shortQuestionCount,
+          longQuestionCount,
+          includeShortOr,
+          includeLongOr,
+          shortMarks: marksPerShort,
+          longMarks: marksPerLong,
+        },
+        (done, total, stageLabel) => {
+          if (stageLabel) {
+            setGenerationProgress(stageLabel);
+          } else if (total > 8) {
+            setGenerationProgress(`${done} / ${total} ready...`);
+          }
+        },
+      );
       setTitle(res.title);
       setQuestions(res.questions);
       setShortQuestions(res.shortQuestions);
@@ -123,6 +140,7 @@ export function TestGeneratorPanel({
       setErrorMsg(err instanceof Error ? err.message : 'Failed to generate paper.');
     } finally {
       setGenerating(false);
+      setGenerationProgress(null);
     }
   }
 
@@ -165,7 +183,7 @@ export function TestGeneratorPanel({
   }
 
   function handleAddManualShortQuestion() {
-    if (shortQuestions.length >= 30) return;
+    if (shortQuestions.length >= 50) return;
     setShortQuestions((prev) => [
       ...prev,
       {
@@ -191,7 +209,7 @@ export function TestGeneratorPanel({
   }
 
   function handleAddManualLongQuestion() {
-    if (longQuestions.length >= 15) return;
+    if (longQuestions.length >= 25) return;
     setLongQuestions((prev) => [
       ...prev,
       {
@@ -273,6 +291,8 @@ export function TestGeneratorPanel({
         questions,
         shortQuestions,
         longQuestions,
+        shortChoiceNote: shortChoiceNote.trim(),
+        longChoiceNote: longChoiceNote.trim(),
         deliveryMode: creatorRole === 'admin' ? deliveryMode : 'inherit',
         isActive: true,
         scheduledReleaseAt: scheduledIso,
@@ -476,16 +496,20 @@ export function TestGeneratorPanel({
 
           <div className="lg:col-span-2">
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Short Questions (Default 0)
+              Short Questions (Up to 50)
             </label>
             <input
               type="number"
               min={0}
-              max={20}
+              max={50}
               value={shortQuestionCount}
               onChange={(e) => {
+                if (e.target.value === '') {
+                  setShortQuestionCount(0);
+                  return;
+                }
                 const val = Number(e.target.value);
-                setShortQuestionCount(Number.isNaN(val) ? 0 : Math.min(20, Math.max(0, Math.floor(val))));
+                setShortQuestionCount(Number.isNaN(val) ? 0 : Math.min(50, Math.max(0, Math.floor(val))));
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
             />
@@ -493,16 +517,20 @@ export function TestGeneratorPanel({
 
           <div className="lg:col-span-2">
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Long Questions (Default 0)
+              Long Questions (Up to 25)
             </label>
             <input
               type="number"
               min={0}
-              max={10}
+              max={25}
               value={longQuestionCount}
               onChange={(e) => {
+                if (e.target.value === '') {
+                  setLongQuestionCount(0);
+                  return;
+                }
                 const val = Number(e.target.value);
-                setLongQuestionCount(Number.isNaN(val) ? 0 : Math.min(10, Math.max(0, Math.floor(val))));
+                setLongQuestionCount(Number.isNaN(val) ? 0 : Math.min(25, Math.max(0, Math.floor(val))));
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
             />
@@ -649,38 +677,80 @@ export function TestGeneratorPanel({
         {(shortQuestionCount > 0 || longQuestionCount > 0) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5 p-4 bg-blue-50/60 border border-blue-200/80 rounded-lg">
             {shortQuestionCount > 0 && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Marks per Short Question ({shortQuestionCount} × {marksPerShort} = {shortQuestionCount * marksPerShort} Marks)
+              <div className="space-y-2.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Marks per Short Question ({shortQuestionCount} × {marksPerShort} = {shortQuestionCount * marksPerShort} Marks)
+                  </label>
+                  <select
+                    value={marksPerShort}
+                    onChange={(e) => setMarksPerShort(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
+                  >
+                    <option value={2}>2 Marks / Short Q</option>
+                    <option value={3}>3 Marks / Short Q</option>
+                    <option value={4}>4 Marks / Short Q</option>
+                    <option value={5}>5 Marks / Short Q</option>
+                  </select>
+                </div>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-teal-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeShortOr}
+                    onChange={(e) => setIncludeShortOr(e.target.checked)}
+                    className="w-4 h-4 accent-teal-700"
+                  />
+                  Include &ldquo;OR&rdquo; Choice on Short Questions (Ya Yeh / Ya Woh)
                 </label>
-                <select
-                  value={marksPerShort}
-                  onChange={(e) => setMarksPerShort(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
-                >
-                  <option value={2}>2 Marks / Short Q</option>
-                  <option value={3}>3 Marks / Short Q</option>
-                  <option value={4}>4 Marks / Short Q</option>
-                  <option value={5}>5 Marks / Short Q</option>
-                </select>
+
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={shortChoiceNote}
+                  onChange={(e) => setShortChoiceNote(e.target.value)}
+                  placeholder="Optional note (e.g. Attempt any 6 out of 9 short questions)"
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
               </div>
             )}
 
             {longQuestionCount > 0 && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Marks per Long Question ({longQuestionCount} × {marksPerLong} = {longQuestionCount * marksPerLong} Marks)
+              <div className="space-y-2.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Marks per Long Question ({longQuestionCount} × {marksPerLong} = {longQuestionCount * marksPerLong} Marks)
+                  </label>
+                  <select
+                    value={marksPerLong}
+                    onChange={(e) => setMarksPerLong(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
+                  >
+                    <option value={5}>5 Marks / Long Q</option>
+                    <option value={6}>6 Marks / Long Q</option>
+                    <option value={8}>8 Marks / Long Q</option>
+                    <option value={10}>10 Marks / Long Q</option>
+                  </select>
+                </div>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-indigo-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeLongOr}
+                    onChange={(e) => setIncludeLongOr(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-700"
+                  />
+                  Include &ldquo;OR&rdquo; Choice on Long Questions (Ya Yeh / Ya Woh)
                 </label>
-                <select
-                  value={marksPerLong}
-                  onChange={(e) => setMarksPerLong(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
-                >
-                  <option value={5}>5 Marks / Long Q</option>
-                  <option value={6}>6 Marks / Long Q</option>
-                  <option value={8}>8 Marks / Long Q</option>
-                  <option value={10}>10 Marks / Long Q</option>
-                </select>
+
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={longChoiceNote}
+                  onChange={(e) => setLongChoiceNote(e.target.value)}
+                  placeholder="Optional note (e.g. Attempt any 3 long questions)"
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
               </div>
             )}
           </div>
@@ -877,7 +947,9 @@ export function TestGeneratorPanel({
             className="px-5 py-2.5 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors inline-flex items-center gap-2 whitespace-nowrap cursor-pointer"
           >
             <RefreshCw className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
-            {generating ? `Generating ${subject} Paper...` : generateButtonSummary}
+            {generating
+              ? generationProgress || `Generating ${subject} Paper...`
+              : generateButtonSummary}
           </button>
 
           <button
@@ -1037,69 +1109,122 @@ export function TestGeneratorPanel({
           {/* Section B: Short Questions */}
           {shortQuestions.length > 0 && (
             <div className="space-y-4 pt-2 border-t border-slate-200">
-              <h3 className="font-display text-sm font-bold uppercase tracking-wider text-teal-800">
-                Section B — Short Answer Questions ({shortQuestions.length})
-              </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-bold uppercase tracking-wider text-teal-800">
+                  Question {questions.length > 0 ? 2 : 1} — Short Answer Questions ({shortQuestions.length})
+                </h3>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={shortChoiceNote}
+                  onChange={(e) => setShortChoiceNote(e.target.value)}
+                  placeholder="Optional instruction (e.g. Attempt any 6 out of 9)..."
+                  className="sm:w-80 px-2.5 py-1 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-600"
+                />
+              </div>
               <div className="space-y-4">
-                {shortQuestions.map((sq, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 bg-teal-50/40 border border-teal-200 rounded-lg space-y-3"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 text-xs text-slate-600 tabular-nums">
-                        <span className="font-semibold text-teal-900">Short Question {idx + 1}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{sq.topicTag || subject}</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
-                          <span>Marks:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            step={0.5}
-                            value={sq.marks}
-                            onChange={(e) =>
+                {shortQuestions.map((sq, idx) => {
+                  const hasOr = sq.orPrompt !== undefined;
+                  return (
+                    <div
+                      key={idx}
+                      className="p-4 bg-teal-50/40 border border-teal-200 rounded-lg space-y-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs text-slate-600 tabular-nums">
+                          <span className="font-semibold text-teal-900">Short Part {idx + 1}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{sq.topicTag || subject}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
                               handleUpdateShortQuestion(idx, {
-                                marks: Math.max(1, Math.min(10, Number(e.target.value) || 3)),
+                                orPrompt: hasOr ? undefined : '',
+                                orSuggestedAnswer: hasOr ? undefined : '',
                               })
                             }
-                            className="w-16 px-2 py-1 text-xs bg-white border border-slate-300 rounded tabular-nums"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveShortQuestion(idx)}
-                          className="text-xs text-red-600 hover:text-red-800 inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Remove
-                        </button>
+                            className={`text-xs font-semibold px-2.5 py-1 rounded border cursor-pointer ${
+                              hasOr
+                                ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                                : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-50'
+                            }`}
+                          >
+                            {hasOr ? 'Remove "OR"' : '+ Add "OR" Choice'}
+                          </button>
+                          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+                            <span>Marks:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              step={0.5}
+                              value={sq.marks}
+                              onChange={(e) =>
+                                handleUpdateShortQuestion(idx, {
+                                  marks: Math.max(1, Math.min(10, Number(e.target.value) || 3)),
+                                })
+                              }
+                              className="w-16 px-2 py-1 text-xs bg-white border border-slate-300 rounded tabular-nums"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveShortQuestion(idx)}
+                            className="text-xs text-red-600 hover:text-red-800 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Remove
+                          </button>
+                        </div>
                       </div>
+
+                      <textarea
+                        rows={2}
+                        required
+                        value={sq.prompt}
+                        onChange={(e) => handleUpdateShortQuestion(idx, { prompt: e.target.value })}
+                        placeholder="Enter short question prompt..."
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      />
+
+                      <textarea
+                        rows={2}
+                        value={sq.suggestedAnswer}
+                        onChange={(e) =>
+                          handleUpdateShortQuestion(idx, { suggestedAnswer: e.target.value })
+                        }
+                        placeholder="Model short answer / marking key (optional)..."
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-600 text-slate-700"
+                      />
+
+                      {hasOr && (
+                        <div className="pt-2 border-t border-teal-200/80 space-y-2">
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-teal-800">
+                            — OR (Alternative Question) —
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={sq.orPrompt ?? ''}
+                            onChange={(e) => handleUpdateShortQuestion(idx, { orPrompt: e.target.value })}
+                            placeholder="Enter alternative OR short question prompt..."
+                            className="w-full px-3 py-2 text-sm bg-white border border-teal-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                          />
+                          <textarea
+                            rows={2}
+                            value={sq.orSuggestedAnswer ?? ''}
+                            onChange={(e) =>
+                              handleUpdateShortQuestion(idx, { orSuggestedAnswer: e.target.value })
+                            }
+                            placeholder="Model answer for OR alternative (optional)..."
+                            className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-600 text-slate-700"
+                          />
+                        </div>
+                      )}
                     </div>
-
-                    <textarea
-                      rows={2}
-                      required
-                      value={sq.prompt}
-                      onChange={(e) => handleUpdateShortQuestion(idx, { prompt: e.target.value })}
-                      placeholder="Enter short question prompt..."
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-
-                    <textarea
-                      rows={2}
-                      value={sq.suggestedAnswer}
-                      onChange={(e) =>
-                        handleUpdateShortQuestion(idx, { suggestedAnswer: e.target.value })
-                      }
-                      placeholder="Model short answer / marking key (optional)..."
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-600 text-slate-700"
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1107,69 +1232,122 @@ export function TestGeneratorPanel({
           {/* Section C: Long Questions */}
           {longQuestions.length > 0 && (
             <div className="space-y-4 pt-2 border-t border-slate-200">
-              <h3 className="font-display text-sm font-bold uppercase tracking-wider text-indigo-800">
-                Section C — Long / Descriptive Questions ({longQuestions.length})
-              </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-bold uppercase tracking-wider text-indigo-800">
+                  Question {(questions.length > 0 ? 1 : 0) + (shortQuestions.length > 0 ? 1 : 0) + 1} — Long / Descriptive Questions ({longQuestions.length})
+                </h3>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={longChoiceNote}
+                  onChange={(e) => setLongChoiceNote(e.target.value)}
+                  placeholder="Optional instruction (e.g. Attempt any 3 long questions)..."
+                  className="sm:w-80 px-2.5 py-1 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
               <div className="space-y-4">
-                {longQuestions.map((lq, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 bg-indigo-50/40 border border-indigo-200 rounded-lg space-y-3"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 text-xs text-slate-600 tabular-nums">
-                        <span className="font-semibold text-indigo-900">Long Question {idx + 1}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{lq.topicTag || subject}</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
-                          <span>Marks:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={25}
-                            step={0.5}
-                            value={lq.marks}
-                            onChange={(e) =>
+                {longQuestions.map((lq, idx) => {
+                  const hasOr = lq.orPrompt !== undefined;
+                  return (
+                    <div
+                      key={idx}
+                      className="p-4 bg-indigo-50/40 border border-indigo-200 rounded-lg space-y-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs text-slate-600 tabular-nums">
+                          <span className="font-semibold text-indigo-900">Long Part {idx + 1}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{lq.topicTag || subject}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
                               handleUpdateLongQuestion(idx, {
-                                marks: Math.max(1, Math.min(25, Number(e.target.value) || 8)),
+                                orPrompt: hasOr ? undefined : '',
+                                orSuggestedAnswer: hasOr ? undefined : '',
                               })
                             }
-                            className="w-16 px-2 py-1 text-xs bg-white border border-slate-300 rounded tabular-nums"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveLongQuestion(idx)}
-                          className="text-xs text-red-600 hover:text-red-800 inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Remove
-                        </button>
+                            className={`text-xs font-semibold px-2.5 py-1 rounded border cursor-pointer ${
+                              hasOr
+                                ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                                : 'bg-white border-indigo-300 text-indigo-800 hover:bg-indigo-50'
+                            }`}
+                          >
+                            {hasOr ? 'Remove "OR"' : '+ Add "OR" Choice'}
+                          </button>
+                          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+                            <span>Marks:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={25}
+                              step={0.5}
+                              value={lq.marks}
+                              onChange={(e) =>
+                                handleUpdateLongQuestion(idx, {
+                                  marks: Math.max(1, Math.min(25, Number(e.target.value) || 8)),
+                                })
+                              }
+                              className="w-16 px-2 py-1 text-xs bg-white border border-slate-300 rounded tabular-nums"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveLongQuestion(idx)}
+                            className="text-xs text-red-600 hover:text-red-800 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Remove
+                          </button>
+                        </div>
                       </div>
+
+                      <textarea
+                        rows={3}
+                        required
+                        value={lq.prompt}
+                        onChange={(e) => handleUpdateLongQuestion(idx, { prompt: e.target.value })}
+                        placeholder="Enter long / descriptive question prompt..."
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                      />
+
+                      <textarea
+                        rows={3}
+                        value={lq.suggestedAnswer}
+                        onChange={(e) =>
+                          handleUpdateLongQuestion(idx, { suggestedAnswer: e.target.value })
+                        }
+                        placeholder="Marking scheme / solution outline (optional)..."
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600 text-slate-700"
+                      />
+
+                      {hasOr && (
+                        <div className="pt-2 border-t border-indigo-200/80 space-y-2">
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-indigo-800">
+                            — OR (Alternative Long Question) —
+                          </div>
+                          <textarea
+                            rows={3}
+                            value={lq.orPrompt ?? ''}
+                            onChange={(e) => handleUpdateLongQuestion(idx, { orPrompt: e.target.value })}
+                            placeholder="Enter alternative OR long / descriptive question prompt..."
+                            className="w-full px-3 py-2 text-sm bg-white border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                          <textarea
+                            rows={3}
+                            value={lq.orSuggestedAnswer ?? ''}
+                            onChange={(e) =>
+                              handleUpdateLongQuestion(idx, { orSuggestedAnswer: e.target.value })
+                            }
+                            placeholder="Solution outline for OR alternative (optional)..."
+                            className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600 text-slate-700"
+                          />
+                        </div>
+                      )}
                     </div>
-
-                    <textarea
-                      rows={3}
-                      required
-                      value={lq.prompt}
-                      onChange={(e) => handleUpdateLongQuestion(idx, { prompt: e.target.value })}
-                      placeholder="Enter long / descriptive question prompt..."
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                    />
-
-                    <textarea
-                      rows={3}
-                      value={lq.suggestedAnswer}
-                      onChange={(e) =>
-                        handleUpdateLongQuestion(idx, { suggestedAnswer: e.target.value })
-                      }
-                      placeholder="Marking scheme / solution outline (optional)..."
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600 text-slate-700"
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1191,6 +1369,8 @@ export function TestGeneratorPanel({
           questions={questions}
           shortQuestions={shortQuestions}
           longQuestions={longQuestions}
+          shortChoiceNote={shortChoiceNote.trim()}
+          longChoiceNote={longChoiceNote.trim()}
           onClose={() => setShowPrintModal(false)}
         />
       )}

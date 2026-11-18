@@ -225,19 +225,29 @@
         },
         "shortQuestionCount": {
           "type": "integer",
-          "description": "Optional number of short questions (0 to 30)."
+          "description": "Optional number of short questions (0 to 50)."
         },
         "longQuestionCount": {
           "type": "integer",
-          "description": "Optional number of long/descriptive questions (0 to 15)."
+          "description": "Optional number of long/descriptive questions (0 to 25)."
         },
         "shortQuestions": {
           "type": "array",
-          "description": "Optional array of structured short-answer questions (0 to 30)."
+          "description": "Optional array of structured short-answer questions (0 to 50), each optionally including an OR alternative."
         },
         "longQuestions": {
           "type": "array",
-          "description": "Optional array of structured long/descriptive questions (0 to 15)."
+          "description": "Optional array of structured long/descriptive questions (0 to 25), each optionally including an OR alternative."
+        },
+        "shortChoiceNote": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional section instruction for short questions (e.g. Attempt any 6 out of 9)."
+        },
+        "longChoiceNote": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional section instruction for long questions (e.g. Attempt any 3 questions)."
         },
         "deliveryMode": {
           "type": "string",

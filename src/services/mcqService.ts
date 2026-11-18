@@ -42,6 +42,8 @@ export interface GenerateMCQRequest {
   questionCount: number;
   shortQuestionCount?: number;
   longQuestionCount?: number;
+  includeShortOr?: boolean;
+  includeLongOr?: boolean;
   shortMarks?: number;
   longMarks?: number;
   avoidPrompts?: string[];
@@ -78,9 +80,11 @@ async function requestGenerateEndpoint(
   try {
     parsed = JSON.parse(rawText) as GenerateMCQResponse & { error?: string };
   } catch {
-    throw new Error(
+    const err = new Error(
       `Server returned an invalid response (HTTP ${response.status}). Please try again.`,
-    );
+    ) as Error & { status?: number };
+    err.status = response.status;
+    throw err;
   }
 
   return {
@@ -103,6 +107,12 @@ async function executeSingleGenerateCall(
     );
     if (netlifyFallback.kind === 'json') {
       result = netlifyFallback;
+    } else if (netlifyFallback.status === 502 || netlifyFallback.status === 504) {
+      const timeoutErr = new Error(
+        `Server timed out while generating this batch (HTTP ${netlifyFallback.status}). Retrying smaller batch...`,
+      ) as Error & { status?: number };
+      timeoutErr.status = netlifyFallback.status;
+      throw timeoutErr;
     } else {
       throw new Error(
         'Live hosting did not route /api/mcq/generate to the backend (received HTML instead of JSON). If you deployed only static files (e.g. Firebase Hosting or drag-and-drop dist), serverless API routes are inactive—deploy the full GitHub repo on Netlify/Vercel with GEMINI_API_KEY, or add questions manually below.',
@@ -111,9 +121,11 @@ async function executeSingleGenerateCall(
   }
 
   if (!result.ok) {
-    throw new Error(
+    const err = new Error(
       result.data.error || `Failed to generate paper from server (HTTP ${result.status}).`,
-    );
+    ) as Error & { status?: number };
+    err.status = result.status;
+    throw err;
   }
 
   return {
@@ -124,44 +136,184 @@ async function executeSingleGenerateCall(
   };
 }
 
+function isRetryableTimeoutError(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  if (status === 502 || status === 503 || status === 504) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return msg.includes('502') || msg.includes('503') || msg.includes('504');
+}
+
 export async function generateMCQsFromServer(
   req: GenerateMCQRequest,
+  onProgress?: (generatedCount: number, totalCount: number, stageLabel?: string) => void,
 ): Promise<GenerateMCQResponse> {
   const totalRequestedMcqs = Math.min(Math.max(Math.round(req.questionCount || 0), 0), 200);
-  if (totalRequestedMcqs <= 30) {
-    return executeSingleGenerateCall({
-      ...req,
-      questionCount: totalRequestedMcqs,
-    });
+  const totalRequestedShort = Math.min(Math.max(Math.round(req.shortQuestionCount || 0), 0), 50);
+  const totalRequestedLong = Math.min(Math.max(Math.round(req.longQuestionCount || 0), 0), 25);
+  const includeShortOr = req.includeShortOr === true;
+  const includeLongOr = req.includeLongOr === true;
+
+  const canRunSingleFastCall =
+    totalRequestedMcqs <= 8 &&
+    totalRequestedShort + totalRequestedLong <= 2 &&
+    !(includeShortOr && totalRequestedShort > 1) &&
+    !(includeLongOr && totalRequestedLong > 1);
+
+  if (canRunSingleFastCall) {
+    try {
+      return await executeSingleGenerateCall({
+        ...req,
+        questionCount: totalRequestedMcqs,
+        shortQuestionCount: totalRequestedShort,
+        longQuestionCount: totalRequestedLong,
+      });
+    } catch (err) {
+      if (!isRetryableTimeoutError(err) || (totalRequestedMcqs <= 4 && totalRequestedShort + totalRequestedLong <= 1)) {
+        throw err;
+      }
+    }
   }
 
-  const batchSize = 30;
   const collectedQuestions: MCQQuestion[] = [];
+  const collectedShort: SubjectiveQuestion[] = [];
+  const collectedLong: SubjectiveQuestion[] = [];
   let suggestedTitle = '';
-  let shortQuestions: SubjectiveQuestion[] = [];
-  let longQuestions: SubjectiveQuestion[] = [];
 
-  let remaining = totalRequestedMcqs;
+  // 1. Generate Short Questions in Netlify-safe batches
+  if (totalRequestedShort > 0) {
+    let shortBatchSize = includeShortOr ? 4 : 6;
+    let shortRemaining = totalRequestedShort;
+    let shortBatchIdx = 0;
+
+    while (shortRemaining > 0 && shortBatchIdx < 20) {
+      const chunkShort = Math.min(shortRemaining, shortBatchSize);
+      const avoidShortPrompts = collectedShort
+        .slice(-40)
+        .flatMap((q) => [q.prompt.slice(0, 100), ...(q.orPrompt ? [q.orPrompt.slice(0, 100)] : [])]);
+
+      let shortRes: GenerateMCQResponse;
+      try {
+        shortRes = await executeSingleGenerateCall({
+          ...req,
+          questionCount: 0,
+          shortQuestionCount: chunkShort,
+          longQuestionCount: 0,
+          ...(avoidShortPrompts.length > 0 ? { avoidPrompts: avoidShortPrompts } : {}),
+        });
+      } catch (err) {
+        if (isRetryableTimeoutError(err) && chunkShort > 2) {
+          shortBatchSize = Math.max(2, Math.floor(chunkShort / 2));
+          shortBatchIdx += 1;
+          continue;
+        }
+        throw err;
+      }
+
+      if (!suggestedTitle && shortRes.title) {
+        suggestedTitle = shortRes.title;
+      }
+
+      const existingShortSet = new Set(
+        collectedShort.map((q) => q.prompt.trim().toLowerCase()),
+      );
+      const freshShort = shortRes.shortQuestions.filter(
+        (q) => !existingShortSet.has(q.prompt.trim().toLowerCase()),
+      );
+      collectedShort.push(...freshShort);
+      onProgress?.(
+        Math.min(collectedShort.length, totalRequestedShort),
+        totalRequestedShort,
+        `Short Qs: ${Math.min(collectedShort.length, totalRequestedShort)} / ${totalRequestedShort}...`,
+      );
+      shortRemaining = totalRequestedShort - collectedShort.length;
+      shortBatchIdx += 1;
+      if (shortRes.shortQuestions.length === 0) break;
+    }
+  }
+
+  // 2. Generate Long Questions in Netlify-safe batches
+  if (totalRequestedLong > 0) {
+    let longBatchSize = includeLongOr ? 2 : 4;
+    let longRemaining = totalRequestedLong;
+    let longBatchIdx = 0;
+
+    while (longRemaining > 0 && longBatchIdx < 18) {
+      const chunkLong = Math.min(longRemaining, longBatchSize);
+      const avoidLongPrompts = collectedLong
+        .slice(-30)
+        .flatMap((q) => [q.prompt.slice(0, 100), ...(q.orPrompt ? [q.orPrompt.slice(0, 100)] : [])]);
+
+      let longRes: GenerateMCQResponse;
+      try {
+        longRes = await executeSingleGenerateCall({
+          ...req,
+          questionCount: 0,
+          shortQuestionCount: 0,
+          longQuestionCount: chunkLong,
+          ...(avoidLongPrompts.length > 0 ? { avoidPrompts: avoidLongPrompts } : {}),
+        });
+      } catch (err) {
+        if (isRetryableTimeoutError(err) && chunkLong > 1) {
+          longBatchSize = Math.max(1, Math.floor(chunkLong / 2));
+          longBatchIdx += 1;
+          continue;
+        }
+        throw err;
+      }
+
+      if (!suggestedTitle && longRes.title) {
+        suggestedTitle = longRes.title;
+      }
+
+      const existingLongSet = new Set(
+        collectedLong.map((q) => q.prompt.trim().toLowerCase()),
+      );
+      const freshLong = longRes.longQuestions.filter(
+        (q) => !existingLongSet.has(q.prompt.trim().toLowerCase()),
+      );
+      collectedLong.push(...freshLong);
+      onProgress?.(
+        Math.min(collectedLong.length, totalRequestedLong),
+        totalRequestedLong,
+        `Long Qs: ${Math.min(collectedLong.length, totalRequestedLong)} / ${totalRequestedLong}...`,
+      );
+      longRemaining = totalRequestedLong - collectedLong.length;
+      longBatchIdx += 1;
+      if (longRes.longQuestions.length === 0) break;
+    }
+  }
+
+  // 3. Generate MCQs in Netlify-safe batches
+  let remaining = totalRequestedMcqs - collectedQuestions.length;
   let batchIndex = 0;
+  let activeBatchSize = 8;
 
-  while (remaining > 0 && batchIndex < 10) {
-    const chunkCount = Math.min(remaining, batchSize);
+  while (remaining > 0 && batchIndex < 35) {
+    const chunkCount = Math.min(remaining, activeBatchSize);
     const avoidPrompts = collectedQuestions
       .slice(-50)
       .map((q) => q.prompt.slice(0, 110));
 
-    const chunkRes = await executeSingleGenerateCall({
-      ...req,
-      questionCount: chunkCount,
-      shortQuestionCount: batchIndex === 0 ? req.shortQuestionCount : 0,
-      longQuestionCount: batchIndex === 0 ? req.longQuestionCount : 0,
-      ...(avoidPrompts.length > 0 ? { avoidPrompts } : {}),
-    });
+    let chunkRes: GenerateMCQResponse;
+    try {
+      chunkRes = await executeSingleGenerateCall({
+        ...req,
+        questionCount: chunkCount,
+        shortQuestionCount: 0,
+        longQuestionCount: 0,
+        ...(avoidPrompts.length > 0 ? { avoidPrompts } : {}),
+      });
+    } catch (err) {
+      if (isRetryableTimeoutError(err) && chunkCount > 4) {
+        activeBatchSize = Math.max(4, Math.floor(chunkCount / 2));
+        batchIndex += 1;
+        continue;
+      }
+      throw err;
+    }
 
-    if (batchIndex === 0) {
+    if (!suggestedTitle && chunkRes.title) {
       suggestedTitle = chunkRes.title;
-      shortQuestions = chunkRes.shortQuestions;
-      longQuestions = chunkRes.longQuestions;
     }
 
     const existingPromptSet = new Set(
@@ -172,6 +324,11 @@ export async function generateMCQsFromServer(
     );
 
     collectedQuestions.push(...freshQuestions);
+    onProgress?.(
+      Math.min(collectedQuestions.length, totalRequestedMcqs),
+      totalRequestedMcqs,
+      `${Math.min(collectedQuestions.length, totalRequestedMcqs)} / ${totalRequestedMcqs} MCQs ready...`,
+    );
     remaining = totalRequestedMcqs - collectedQuestions.length;
     batchIndex += 1;
 
@@ -183,8 +340,8 @@ export async function generateMCQsFromServer(
   return {
     title: suggestedTitle || `${req.grade} ${req.subject} Assessment`,
     questions: collectedQuestions.slice(0, totalRequestedMcqs),
-    shortQuestions,
-    longQuestions,
+    shortQuestions: collectedShort.slice(0, totalRequestedShort),
+    longQuestions: collectedLong.slice(0, totalRequestedLong),
   };
 }
 
@@ -203,6 +360,8 @@ export async function publishMCQTest(input: {
   questions: MCQQuestion[];
   shortQuestions?: SubjectiveQuestion[];
   longQuestions?: SubjectiveQuestion[];
+  shortChoiceNote?: string;
+  longChoiceNote?: string;
   deliveryMode: TestDeliveryOverride;
   isActive: boolean;
   scheduledReleaseAt: string;
@@ -212,8 +371,23 @@ export async function publishMCQTest(input: {
 }): Promise<MCQTest> {
   const id = generateSafeId('test');
   const cleanQuestions = input.questions.slice(0, 200);
-  const cleanShortQuestions = (input.shortQuestions ?? []).slice(0, 30);
-  const cleanLongQuestions = (input.longQuestions ?? []).slice(0, 15);
+  const sanitizeSubjList = (list: SubjectiveQuestion[] | undefined, max: number) =>
+    (list ?? []).slice(0, max).map((item) => {
+      const cleanOrPrompt = (item.orPrompt ?? '').trim();
+      const cleanOrAnswer = (item.orSuggestedAnswer ?? '').trim();
+      return {
+        prompt: item.prompt.trim(),
+        suggestedAnswer: (item.suggestedAnswer ?? '').trim(),
+        marks: item.marks,
+        topicTag: (item.topicTag ?? '').trim(),
+        ...(cleanOrPrompt ? { orPrompt: cleanOrPrompt } : {}),
+        ...(cleanOrPrompt && cleanOrAnswer ? { orSuggestedAnswer: cleanOrAnswer } : {}),
+      };
+    });
+  const cleanShortQuestions = sanitizeSubjList(input.shortQuestions, 50);
+  const cleanLongQuestions = sanitizeSubjList(input.longQuestions, 25);
+  const cleanShortChoiceNote = (input.shortChoiceNote ?? '').trim().slice(0, 200);
+  const cleanLongChoiceNote = (input.longChoiceNote ?? '').trim().slice(0, 200);
   const cleanSchoolName = (input.schoolName ?? '').trim().slice(0, 140);
   const cleanExamLabel = (input.examLabel ?? '').trim().slice(0, 80);
   const cleanPaperDate = (input.paperDate ?? '').trim().slice(0, 40);
@@ -241,12 +415,14 @@ export async function publishMCQTest(input: {
       ? {
           shortQuestionCount: cleanShortQuestions.length,
           shortQuestions: cleanShortQuestions,
+          ...(cleanShortChoiceNote ? { shortChoiceNote: cleanShortChoiceNote } : {}),
         }
       : {}),
     ...(cleanLongQuestions.length > 0
       ? {
           longQuestionCount: cleanLongQuestions.length,
           longQuestions: cleanLongQuestions,
+          ...(cleanLongChoiceNote ? { longChoiceNote: cleanLongChoiceNote } : {}),
         }
       : {}),
     deliveryMode: input.deliveryMode,

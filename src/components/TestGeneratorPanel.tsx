@@ -409,6 +409,159 @@ export function TestGeneratorPanel({
           </div>
         </div>
 
+        {/* Official Federal Board (FBISE) Model Paper Patterns */}
+        <div className="mb-5 p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+            <div>
+              <span className="text-xs font-bold text-slate-900">
+                Official Federal Board (FBISE) Model Paper Patterns
+              </span>
+              <span className="ml-2 text-[11px] text-slate-500">
+                (1-Click Apply · Section-A MCQs + Section-B SRQs + Section-C ERQs)
+              </span>
+            </div>
+            <span className="text-[11px] font-semibold text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+              fbise.edu.pk Pattern
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+            {[
+              {
+                id: 'ssc_sci_65',
+                label: 'SSC Science (65 Marks)',
+                sub: '12 MCQ · 11 Short · 2 Long',
+                mcq: 12,
+                mcqMarks: 1,
+                shortCount: 11,
+                shortMarks: 3,
+                longCount: 2,
+                longMarks: 10,
+                duration: 180,
+                shortOr: true,
+                longOr: true,
+                shortNote: 'Attempt all 11 Short Response Questions (internal OR choice provided).',
+                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
+                examType: 'FBISE Model Paper (SSC)',
+              },
+              {
+                id: 'hssc_sci_85',
+                label: 'HSSC Science (85 Marks)',
+                sub: '17 MCQ · 14 Short · 2 Long',
+                mcq: 17,
+                mcqMarks: 1,
+                shortCount: 14,
+                shortMarks: 3,
+                longCount: 2,
+                longMarks: 13,
+                duration: 180,
+                shortOr: true,
+                longOr: true,
+                shortNote: 'Attempt all 14 Short Response Questions (internal OR choice provided).',
+                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
+                examType: 'FBISE Model Paper (HSSC)',
+              },
+              {
+                id: 'math_75',
+                label: 'Mathematics (75 Marks)',
+                sub: '15 MCQ · 9 Short · 3 Long',
+                mcq: 15,
+                mcqMarks: 1,
+                shortCount: 9,
+                shortMarks: 4,
+                longCount: 3,
+                longMarks: 8,
+                duration: 180,
+                shortOr: true,
+                longOr: true,
+                shortNote: 'Attempt all 9 Short Response Questions (internal OR choice provided).',
+                longNote: 'Attempt all 3 Extended Response Questions (OR choice provided).',
+                examType: 'FBISE Model Paper (Math)',
+              },
+              {
+                id: 'reformed_60',
+                label: 'Reformed 50/50 (60 Marks)',
+                sub: '30 MCQ · 6 Short · 2 Long',
+                mcq: 30,
+                mcqMarks: 1,
+                shortCount: 6,
+                shortMarks: 3,
+                longCount: 2,
+                longMarks: 6,
+                duration: 150,
+                shortOr: true,
+                longOr: true,
+                shortNote: 'Attempt all 6 Short Response Questions (internal OR choice provided).',
+                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
+                examType: 'FBISE Reformed 50/50 Pattern',
+              },
+              {
+                id: 'humanities_100',
+                label: 'Compulsory / Arts (100)',
+                sub: '20 MCQ · 10 Short · 4 Long',
+                mcq: 20,
+                mcqMarks: 1,
+                shortCount: 10,
+                shortMarks: 4,
+                longCount: 4,
+                longMarks: 10,
+                duration: 180,
+                shortOr: true,
+                longOr: true,
+                shortNote: 'Attempt all 10 Short Response Questions (internal OR choice provided).',
+                longNote: 'Attempt all 4 Extended Response Questions (OR choice provided).',
+                examType: 'FBISE Model Paper (100 Marks)',
+              },
+            ].map((preset) => {
+              const isActive =
+                board === 'fbise_nbf' &&
+                questionCount === preset.mcq &&
+                shortQuestionCount === preset.shortCount &&
+                longQuestionCount === preset.longCount &&
+                marksPerShort === preset.shortMarks &&
+                marksPerLong === preset.longMarks;
+
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    setBoard('fbise_nbf');
+                    setQuestionCount(preset.mcq);
+                    setMarksPerQuestion(preset.mcqMarks);
+                    setShortQuestionCount(preset.shortCount);
+                    setMarksPerShort(preset.shortMarks);
+                    setIncludeShortOr(preset.shortOr);
+                    setShortChoiceNote(preset.shortNote);
+                    setLongQuestionCount(preset.longCount);
+                    setMarksPerLong(preset.longMarks);
+                    setIncludeLongOr(preset.longOr);
+                    setLongChoiceNote(preset.longNote);
+                    setDurationMinutes(preset.duration);
+                    if (!examLabel.trim()) {
+                      setExamLabel(preset.examType);
+                    }
+                    setErrorMsg(null);
+                  }}
+                  className={`text-left px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
+                      : 'bg-white text-slate-800 border-slate-300 hover:bg-blue-50 hover:border-blue-400'
+                  }`}
+                >
+                  <div className="text-[11px] font-bold leading-tight">{preset.label}</div>
+                  <div
+                    className={`text-[10px] mt-0.5 tabular-nums ${
+                      isActive ? 'text-blue-100' : 'text-slate-500'
+                    }`}
+                  >
+                    {preset.sub}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-5">
           <div className="lg:col-span-2">
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
@@ -730,6 +883,9 @@ export function TestGeneratorPanel({
                     <option value={6}>6 Marks / Long Q</option>
                     <option value={8}>8 Marks / Long Q</option>
                     <option value={10}>10 Marks / Long Q</option>
+                    <option value={12}>12 Marks / Long Q</option>
+                    <option value={13}>13 Marks / Long Q</option>
+                    <option value={15}>15 Marks / Long Q</option>
                   </select>
                 </div>
 

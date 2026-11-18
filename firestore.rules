@@ -38,14 +38,36 @@ service cloud.firestore {
     function isBootstrappedAdminEmail() {
       return isVerifiedEmail() && request.auth.token.email in [
         'meranamasimkhan@gmail.com',
-        'shahzainandwalli@gmail.com'
+        'shahzainandwalli@gmail.com',
+        'fbisemcqtest@gmail.com'
       ];
+    }
+
+    function isMainAdminEmailValue(email) {
+      return email in [
+        'meranamasimkhan@gmail.com',
+        'shahzainandwalli@gmail.com',
+        'fbisemcqtest@gmail.com'
+      ];
+    }
+
+    function isMainAdmin() {
+      return isBootstrappedAdminEmail();
+    }
+
+    function isActiveSecondaryAdmin() {
+      return isVerifiedEmail() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        (
+          !('status' in get(/databases/$(database)/documents/admins/$(request.auth.uid)).data) ||
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.status == 'active'
+        );
     }
 
     function isAdmin() {
       return isSignedIn() && (
-        isBootstrappedAdminEmail() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        isMainAdmin() ||
+        isActiveSecondaryAdmin()
       );
     }
 
@@ -79,6 +101,12 @@ service cloud.firestore {
 
     function studentInstantPracticeAllowed() {
       return !globalSettingsExists() || getGlobalSettings().allowStudentInstantPractice == true;
+    }
+
+    function teacherPaperCreationAllowed() {
+      return !globalSettingsExists() ||
+        !('allowTeacherPaperCreation' in getGlobalSettings()) ||
+        getGlobalSettings().allowTeacherPaperCreation == true;
     }
 
     function effectiveModeIsInstant(testData) {
@@ -125,7 +153,7 @@ service cloud.firestore {
         data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
         data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
         data.role in ['student', 'teacher', 'admin'] &&
-        data.status in ['pending', 'approved', 'rejected'] &&
+        data.status in ['pending', 'approved', 'rejected', 'paused'] &&
         data.grade in ['9th', '10th', '1st A', '2nd Year', 'All'] &&
         (data.subject == 'All' || isValidSubject(data.subject)) &&
         data.identifier is string && data.identifier.size() <= 64 &&
@@ -136,11 +164,13 @@ service cloud.firestore {
 
     function isValidAdminRecord(data) {
       return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'status', 'createdAt', 'updatedAt']) &&
         isValidId(data.uid) &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
         data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 128 &&
-        data.createdAt is timestamp;
+        (!('status' in data) || data.status in ['active', 'paused']) &&
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidSystemSettings(data) {
@@ -150,11 +180,13 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'resultMode', 'testAccessMode', 'allowStudentInstantPractice',
+          'allowTeacherPaperCreation',
           'defaultTimeLimitMinutes', 'passingPercentage', 'updatedBy', 'updatedAt'
         ]) &&
         data.resultMode in ['instant', 'admin_review'] &&
         data.testAccessMode in ['instant_open', 'scheduled_window'] &&
         data.allowStudentInstantPractice is bool &&
+        (!('allowTeacherPaperCreation' in data) || data.allowTeacherPaperCreation is bool) &&
         data.defaultTimeLimitMinutes is int && data.defaultTimeLimitMinutes >= 1 && data.defaultTimeLimitMinutes <= 180 &&
         data.passingPercentage is int && data.passingPercentage >= 1 && data.passingPercentage <= 100 &&
         data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128 &&
@@ -268,7 +300,7 @@ service cloud.firestore {
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         (
-          (isAdmin() && incoming().role == 'admin' && incoming().status == 'approved') ||
+          (isMainAdmin() && incoming().role == 'admin' && incoming().status == 'approved') ||
           (incoming().role in ['student', 'teacher'] && incoming().status == 'pending')
         );
 
@@ -281,7 +313,14 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         (
           (
+            isMainAdmin() &&
+            (!isMainAdminEmailValue(existing().email) || (incoming().role == 'admin' && incoming().status == 'approved')) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'grade', 'subject', 'approvedBy', 'updatedAt'])
+          ) ||
+          (
             isAdmin() &&
+            existing().role != 'admin' &&
+            incoming().role != 'admin' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'grade', 'subject', 'approvedBy', 'updatedAt'])
           ) ||
           (
@@ -292,15 +331,24 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if isValidId(userId) && isAdmin();
+      allow delete: if isValidId(userId) && (
+        (isMainAdmin() && !isMainAdminEmailValue(existing().email)) ||
+        (isAdmin() && existing().role != 'admin')
+      );
     }
 
     match /admins/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isValidId(userId) && isAdmin() && isValidAdminRecord(incoming()) && incoming().createdAt == request.time;
-      allow update: if isValidId(userId) && isAdmin() && isValidAdminRecord(incoming()) && incoming().createdAt == existing().createdAt;
-      allow delete: if isValidId(userId) && isAdmin();
+      allow create: if isValidId(userId) && isMainAdmin() && isValidAdminRecord(incoming()) && incoming().createdAt == request.time;
+      allow update: if isValidId(userId) && isMainAdmin() && isValidAdminRecord(incoming()) &&
+        !isMainAdminEmailValue(existing().email) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt &&
+        (!('updatedAt' in incoming()) || incoming().updatedAt == request.time) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'grantedBy', 'updatedAt']);
+      allow delete: if isValidId(userId) && isMainAdmin() && !isMainAdminEmailValue(existing().email);
     }
 
     match /systemSettings/{settingId} {
@@ -337,7 +385,7 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         (
           isAdmin() ||
-          (isApprovedTeacher() && incoming().createdByRole == 'teacher') ||
+          (isApprovedTeacher() && teacherPaperCreationAllowed() && incoming().createdByRole == 'teacher') ||
           (
             isApprovedStudent() &&
             studentInstantPracticeAllowed() &&

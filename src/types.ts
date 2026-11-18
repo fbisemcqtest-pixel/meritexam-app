@@ -23,7 +23,7 @@ export type SubjectName =
   | 'Home Economics';
 
 export type UserRole = 'student' | 'teacher' | 'admin';
-export type AccountStatus = 'pending' | 'approved' | 'rejected';
+export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'paused';
 export type ResultMode = 'instant' | 'admin_review';
 export type TestAccessMode = 'instant_open' | 'scheduled_window';
 export type DifficultyTier = 'Standard' | 'Conceptual' | 'Board Exam';
@@ -1005,6 +1005,7 @@ export interface SystemSettings {
   resultMode: ResultMode;
   testAccessMode: TestAccessMode;
   allowStudentInstantPractice: boolean;
+  allowTeacherPaperCreation?: boolean;
   defaultTimeLimitMinutes: number;
   passingPercentage: number;
   updatedBy: string;

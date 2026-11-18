@@ -6,6 +6,7 @@ import JSZip from 'jszip';
 const BOOTSTRAPPED_ADMIN_EMAILS = [
   'meranamasimkhan@gmail.com',
   'shahzainandwalli@gmail.com',
+  'fbisemcqtest@gmail.com',
 ];
 
 interface ApiResponse extends ServerResponse {
@@ -70,7 +71,18 @@ async function verifyAdminBearerToken(
       headers: { Authorization: `Bearer ${idToken}` },
     },
   );
-  return adminDocRes.ok;
+  if (!adminDocRes.ok) return false;
+  try {
+    const adminDocData = (await adminDocRes.json()) as {
+      fields?: { status?: { stringValue?: string } };
+    };
+    if (adminDocData.fields?.status?.stringValue === 'paused') {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 function addDirectoryToZip(zip: JSZip, baseDir: string, currentDir: string) {

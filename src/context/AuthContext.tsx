@@ -34,6 +34,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   resultMode: 'instant',
   testAccessMode: 'instant_open',
   allowStudentInstantPractice: true,
+  allowTeacherPaperCreation: true,
   defaultTimeLimitMinutes: 15,
   passingPercentage: 50,
   updatedBy: '',
@@ -53,6 +54,8 @@ interface AuthContextValue {
   userProfile: UserAccount | null;
   profileLoaded: boolean;
   isAdmin: boolean;
+  isMainAdmin: boolean;
+  isPausedAdmin: boolean;
   systemSettings: SystemSettings;
   signInWithGoogle: () => Promise<User>;
   registerRoleAccount: (payload: RegisterPayload) => Promise<UserAccount>;
@@ -68,6 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserAccount | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [hasAdminDoc, setHasAdminDoc] = useState(false);
+  const [adminDocStatus, setAdminDocStatus] = useState<'active' | 'paused' | null>(null);
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
 
   useEffect(() => {
@@ -76,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user) {
         setUserProfile(null);
         setHasAdminDoc(false);
+        setAdminDocStatus(null);
         setProfileLoaded(true);
         setSystemSettings(DEFAULT_SYSTEM_SETTINGS);
       } else {
@@ -111,7 +116,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubAdmin = onSnapshot(
       doc(db, 'admins', firebaseUser.uid),
       (snap) => {
-        setHasAdminDoc(snap.exists());
+        if (snap.exists()) {
+          setHasAdminDoc(true);
+          const data = snap.data() as { status?: string };
+          setAdminDocStatus(data.status === 'paused' ? 'paused' : 'active');
+        } else {
+          setHasAdminDoc(false);
+          setAdminDocStatus(null);
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, adminPath);
@@ -140,11 +152,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [authReady, firebaseUser]);
 
-  const isBootstrappedAdmin =
+  const isMainAdmin =
     Boolean(firebaseUser?.emailVerified) &&
     Boolean(firebaseUser?.email && BOOTSTRAPPED_ADMIN_EMAILS.includes(firebaseUser.email.toLowerCase()));
 
-  const isAdmin = Boolean(isBootstrappedAdmin || hasAdminDoc || (userProfile?.role === 'admin' && userProfile?.status === 'approved' && hasAdminDoc));
+  const isPausedAdmin = Boolean(
+    !isMainAdmin &&
+      (adminDocStatus === 'paused' ||
+        (userProfile?.role === 'admin' && userProfile?.status === 'paused')),
+  );
+
+  const isAdmin = Boolean(
+    isMainAdmin ||
+      (hasAdminDoc && adminDocStatus !== 'paused' && userProfile?.status !== 'paused'),
+  );
 
   async function signInWithGoogle(): Promise<User> {
     googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -159,14 +180,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       BOOTSTRAPPED_ADMIN_EMAILS.includes(user.email.toLowerCase()),
     );
     let adminRecordExists = false;
+    let adminRecordPaused = false;
     try {
       const adminSnap = await getDoc(doc(db, 'admins', user.uid));
       adminRecordExists = adminSnap.exists();
+      if (adminRecordExists) {
+        const data = adminSnap.data() as { status?: string };
+        adminRecordPaused = data.status === 'paused';
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.GET, `admins/${user.uid}`);
     }
 
-    if (!isSuperAdmin && !adminRecordExists) {
+    if (!isSuperAdmin && (!adminRecordExists || adminRecordPaused)) {
       return false;
     }
 
@@ -176,7 +202,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           uid: user.uid,
           email: user.email ?? '',
           grantedBy: 'system_bootstrap',
+          status: 'active',
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `admins/${user.uid}`);
@@ -198,7 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-      } else {
+      } else if (isSuperAdmin) {
         const existingData = userSnap.data() as UserAccount;
         if (existingData.role !== 'admin' || existingData.status !== 'approved') {
           await updateDoc(doc(db, 'users', user.uid), {
@@ -207,6 +235,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             approvedBy: 'system_bootstrap',
             updatedAt: serverTimestamp(),
           });
+        }
+      } else {
+        const existingData = userSnap.data() as UserAccount;
+        if (existingData.status === 'paused') {
+          return false;
         }
       }
     } catch (error) {
@@ -220,6 +253,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           resultMode: 'instant',
           testAccessMode: 'instant_open',
           allowStudentInstantPractice: true,
+          allowTeacherPaperCreation: true,
           defaultTimeLimitMinutes: 15,
           passingPercentage: 50,
           updatedBy: user.uid,
@@ -284,6 +318,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         userProfile,
         profileLoaded,
         isAdmin,
+        isMainAdmin,
+        isPausedAdmin,
         systemSettings,
         signInWithGoogle,
         registerRoleAccount,

@@ -85,6 +85,8 @@ export function TeacherDashboard() {
     };
   }, [userProfile]);
 
+  const teacherPaperCreationAllowed = systemSettings.allowTeacherPaperCreation !== false;
+
   if (!userProfile) return null;
 
   if (previewTest) {
@@ -211,20 +213,49 @@ export function TeacherDashboard() {
                   ? 'Option 1: Instant Result Mode'
                   : 'Option 2: Controlled / Admin Review Mode'}
               </p>
+              {!teacherPaperCreationAllowed && (
+                <p className="text-xs font-semibold text-orange-700 mt-1 inline-flex items-center gap-1">
+                  <PauseCircle className="w-3.5 h-3.5" />
+                  New Paper Creation Paused by Admin
+                </p>
+              )}
             </div>
           </div>
         </div>
 
         {activeTab === 'create' && (
-          <TestGeneratorPanel
-            creatorUid={userProfile.uid}
-            creatorName={userProfile.fullName}
-            creatorRole="teacher"
-            defaultGrade={userProfile.grade}
-            defaultSubject={userProfile.subject}
-            systemSettings={systemSettings}
-            onPublished={() => setActiveTab('bank')}
-          />
+          teacherPaperCreationAllowed ? (
+            <TestGeneratorPanel
+              creatorUid={userProfile.uid}
+              creatorName={userProfile.fullName}
+              creatorRole="teacher"
+              defaultGrade={userProfile.grade}
+              defaultSubject={userProfile.subject}
+              systemSettings={systemSettings}
+              onPublished={() => setActiveTab('bank')}
+            />
+          ) : (
+            <div className="bg-white border border-orange-200 rounded-xl p-8 text-center space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200 text-orange-700 flex items-center justify-center mx-auto">
+                <PauseCircle className="w-6 h-6" />
+              </div>
+              <h2 className="font-display text-xl font-bold text-slate-900">
+                Paper Creation Paused by Administrator
+              </h2>
+              <p className="text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
+                The Administrator has temporarily turned off new paper generation for teachers. You can still view, preview, or print your existing saved tests until the Administrator re-enables paper creation.
+              </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('bank')}
+                  className="px-4 py-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+                >
+                  Open My Existing Papers ({myTests.length})
+                </button>
+              </div>
+            </div>
+          )
         )}
 
         {activeTab === 'bank' && (
@@ -233,13 +264,15 @@ export function TeacherDashboard() {
               <h2 className="font-display text-lg font-semibold text-slate-900">
                 Published MCQ Assessments
               </h2>
-              <button
-                type="button"
-                onClick={() => setActiveTab('create')}
-                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
-              >
-                New Test
-              </button>
+              {teacherPaperCreationAllowed && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('create')}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
+                >
+                  New Test
+                </button>
+              )}
             </div>
 
             {myTests.length === 0 ? (

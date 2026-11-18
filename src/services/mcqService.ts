@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -56,18 +57,47 @@ export interface GenerateMCQResponse {
   longQuestions: SubjectiveQuestion[];
 }
 
+function isNetworkFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const m = err.message.toLowerCase();
+  return (
+    err.name === 'TypeError' ||
+    m.includes('failed to fetch') ||
+    m.includes('networkerror') ||
+    m.includes('load failed') ||
+    m.includes('network request failed')
+  );
+}
+
 async function requestGenerateEndpoint(
   url: string,
   req: GenerateMCQRequest,
 ): Promise<{ kind: 'json'; status: number; ok: boolean; data: GenerateMCQResponse & { error?: string } } | { kind: 'html'; status: number }> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(req),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(req),
+    });
+  } catch (err) {
+    if (isNetworkFetchError(err)) {
+      await new Promise((r) => setTimeout(r, 600));
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(req),
+      });
+    } else {
+      throw err;
+    }
+  }
 
   const rawText = await response.text();
   const trimmed = rawText.trim();
@@ -98,7 +128,23 @@ async function requestGenerateEndpoint(
 async function executeSingleGenerateCall(
   req: GenerateMCQRequest,
 ): Promise<GenerateMCQResponse> {
-  let result = await requestGenerateEndpoint('/api/mcq/generate', req);
+  let result: Awaited<ReturnType<typeof requestGenerateEndpoint>>;
+  try {
+    result = await requestGenerateEndpoint('/api/mcq/generate', req);
+  } catch (primaryErr) {
+    if (isNetworkFetchError(primaryErr)) {
+      try {
+        const netlifyDirect = await requestGenerateEndpoint('/.netlify/functions/generate-mcq', req);
+        result = netlifyDirect;
+      } catch {
+        throw new Error(
+          'Network connection to the paper generator failed (Failed to fetch). Check your internet/VPN, make sure you are on your latest active site URL (refresh the page if you renamed Netlify), and try again.',
+        );
+      }
+    } else {
+      throw primaryErr;
+    }
+  }
 
   if (result.kind === 'html') {
     const netlifyFallback = await requestGenerateEndpoint(
@@ -137,10 +183,11 @@ async function executeSingleGenerateCall(
 }
 
 function isRetryableTimeoutError(err: unknown): boolean {
+  if (isNetworkFetchError(err)) return true;
   const status = (err as { status?: number } | null)?.status;
   if (status === 502 || status === 503 || status === 504) return true;
   const msg = err instanceof Error ? err.message : String(err ?? '');
-  return msg.includes('502') || msg.includes('503') || msg.includes('504');
+  return msg.includes('502') || msg.includes('503') || msg.includes('504') || msg.includes('Failed to fetch');
 }
 
 export async function generateMCQsFromServer(
@@ -580,12 +627,84 @@ export async function updateAccountApproval(input: {
   try {
     await updateDoc(doc(db, 'users', input.uid), payload);
     if (input.role === 'admin' && input.status === 'approved') {
-      await setDoc(doc(db, 'admins', input.uid), {
+      const adminRef = doc(db, 'admins', input.uid);
+      const adminSnap = await getDoc(adminRef);
+      if (adminSnap.exists()) {
+        await updateDoc(adminRef, {
+          status: 'active',
+          grantedBy: input.adminUid,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(adminRef, {
+          uid: input.uid,
+          email: input.email,
+          grantedBy: input.adminUid,
+          status: 'active',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${input.uid}`);
+  }
+}
+
+export async function pauseOrResumeAdmin(input: {
+  uid: string;
+  email: string;
+  pause: boolean;
+  mainAdminUid: string;
+}): Promise<void> {
+  const nextUserStatus: AccountStatus = input.pause ? 'paused' : 'approved';
+  const nextAdminStatus: 'active' | 'paused' = input.pause ? 'paused' : 'active';
+
+  try {
+    await updateDoc(doc(db, 'users', input.uid), {
+      status: nextUserStatus,
+      approvedBy: input.mainAdminUid,
+      updatedAt: serverTimestamp(),
+    });
+
+    const adminRef = doc(db, 'admins', input.uid);
+    const adminSnap = await getDoc(adminRef);
+    if (adminSnap.exists()) {
+      await updateDoc(adminRef, {
+        status: nextAdminStatus,
+        grantedBy: input.mainAdminUid,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(adminRef, {
         uid: input.uid,
         email: input.email,
-        grantedBy: input.adminUid,
+        grantedBy: input.mainAdminUid,
+        status: nextAdminStatus,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `admins/${input.uid}`);
+  }
+}
+
+export async function revokeAdminAccess(input: {
+  uid: string;
+  mainAdminUid: string;
+}): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'users', input.uid), {
+      role: 'teacher',
+      status: 'rejected',
+      approvedBy: input.mainAdminUid,
+      updatedAt: serverTimestamp(),
+    });
+    const adminRef = doc(db, 'admins', input.uid);
+    const adminSnap = await getDoc(adminRef);
+    if (adminSnap.exists()) {
+      await deleteDoc(adminRef);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${input.uid}`);
@@ -599,6 +718,7 @@ export async function saveSystemSettings(
   try {
     await setDoc(doc(db, 'systemSettings', 'global'), {
       ...settings,
+      allowTeacherPaperCreation: settings.allowTeacherPaperCreation ?? true,
       defaultTimeLimitMinutes: Math.min(Math.max(Math.round(settings.defaultTimeLimitMinutes), 1), 180),
       passingPercentage: Math.min(Math.max(Math.round(settings.passingPercentage), 1), 100),
       updatedBy: adminUid,
@@ -607,6 +727,24 @@ export async function saveSystemSettings(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'systemSettings/global');
   }
+}
+
+export async function toggleTeacherPaperCreation(
+  allowed: boolean,
+  adminUid: string,
+  currentSettings: SystemSettings,
+): Promise<void> {
+  await saveSystemSettings(
+    {
+      resultMode: currentSettings.resultMode,
+      testAccessMode: currentSettings.testAccessMode,
+      allowStudentInstantPractice: currentSettings.allowStudentInstantPractice,
+      allowTeacherPaperCreation: allowed,
+      defaultTimeLimitMinutes: currentSettings.defaultTimeLimitMinutes,
+      passingPercentage: currentSettings.passingPercentage,
+    },
+    adminUid,
+  );
 }
 
 export { collection };

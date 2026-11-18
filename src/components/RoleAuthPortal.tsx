@@ -38,6 +38,7 @@ export function RoleAuthPortal({
     userProfile,
     profileLoaded,
     isAdmin,
+    isPausedAdmin,
     signInWithGoogle,
     registerRoleAccount,
     ensureBootstrappedAdmin,
@@ -306,27 +307,31 @@ export function RoleAuthPortal({
     }
   }
 
-  // Case 3: Admin portal signed-in non-admin user
+  // Case 3: Admin portal signed-in non-admin or paused admin user
   if (firebaseUser && portalRole === 'admin' && !isAdmin) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-teal-50/40 flex flex-col">
         <TopBar onBack={onBack} portalRole={portalRole} onSwitchPortal={onSwitchPortal} />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-lg w-full shadow-sm">
-            <div className="h-1.5 w-full bg-gradient-to-r from-red-600 to-amber-600" />
+            <div className={`h-1.5 w-full bg-gradient-to-r ${isPausedAdmin ? 'from-amber-500 to-orange-600' : 'from-red-600 to-amber-600'}`} />
             <div className="p-8">
-              <div className="w-11 h-11 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center text-red-700 mb-5">
+              <div className={`w-11 h-11 rounded-lg border flex items-center justify-center mb-5 ${isPausedAdmin ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
                 <ShieldAlert className="w-5 h-5" />
               </div>
               <h2 className="font-display text-2xl font-bold text-slate-900">
-                Administrator Authorization Required
+                {isPausedAdmin
+                  ? 'Administrator Access Temporarily Paused'
+                  : 'Administrator Authorization Required'}
               </h2>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                Signed in as <span className="font-semibold text-slate-900">{firebaseUser.email}</span>.
-                This account is not listed in the verified Administrators registry.
+                Signed in as <span className="font-semibold text-slate-900">{firebaseUser.email}</span>.{' '}
+                {isPausedAdmin
+                  ? 'Your administrator privileges have been temporarily paused by a Main Administrator. You cannot generate papers, approve accounts, or manage tests until your access is resumed.'
+                  : 'This account is not listed in the verified Administrators registry.'}
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-3">
-                {userProfile && (
+                {userProfile && userProfile.role !== 'admin' && (
                   <button
                     type="button"
                     onClick={() => onSwitchPortal(userProfile.role)}

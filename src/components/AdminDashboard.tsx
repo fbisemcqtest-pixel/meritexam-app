@@ -23,11 +23,19 @@ import {
   query,
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { OperationType, db, handleFirestoreError } from '../lib/firebase';
+import {
+  BOOTSTRAPPED_ADMIN_EMAILS,
+  OperationType,
+  db,
+  handleFirestoreError,
+} from '../lib/firebase';
 import {
   deleteMCQTest,
+  pauseOrResumeAdmin,
   releaseAttemptResult,
+  revokeAdminAccess,
   saveSystemSettings,
+  toggleTeacherPaperCreation,
   toggleTestActiveStatus,
   updateAccountApproval,
   updateTestDeliveryOverride,
@@ -48,7 +56,7 @@ import { PrintablePaperModal } from './PrintablePaperModal';
 import { DeveloperFooter } from './DeveloperFooter';
 
 export function AdminDashboard() {
-  const { firebaseUser, userProfile, systemSettings, logout } = useAuth();
+  const { firebaseUser, userProfile, isMainAdmin, systemSettings, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'tests' | 'results'>('users');
 
   const [users, setUsers] = useState<UserAccount[]>([]);
@@ -64,6 +72,10 @@ export function AdminDashboard() {
   const [allowStudentInstantPractice, setAllowStudentInstantPractice] = useState<boolean>(
     systemSettings.allowStudentInstantPractice,
   );
+  const [allowTeacherPaperCreation, setAllowTeacherPaperCreation] = useState<boolean>(
+    systemSettings.allowTeacherPaperCreation !== false,
+  );
+  const [togglingTeacherPapers, setTogglingTeacherPapers] = useState(false);
   const [defaultTimeLimitMinutes, setDefaultTimeLimitMinutes] = useState<number>(
     systemSettings.defaultTimeLimitMinutes,
   );
@@ -82,6 +94,7 @@ export function AdminDashboard() {
     setResultMode(systemSettings.resultMode);
     setTestAccessMode(systemSettings.testAccessMode);
     setAllowStudentInstantPractice(systemSettings.allowStudentInstantPractice);
+    setAllowTeacherPaperCreation(systemSettings.allowTeacherPaperCreation !== false);
     setDefaultTimeLimitMinutes(systemSettings.defaultTimeLimitMinutes);
     setPassingPercentage(systemSettings.passingPercentage);
   }, [systemSettings]);
@@ -153,6 +166,7 @@ export function AdminDashboard() {
           resultMode,
           testAccessMode,
           allowStudentInstantPractice,
+          allowTeacherPaperCreation,
           defaultTimeLimitMinutes,
           passingPercentage,
         },
@@ -161,6 +175,17 @@ export function AdminDashboard() {
       setSettingsSavedMsg('Examination mode and settings saved across all portals.');
     } finally {
       setSavingSettings(false);
+    }
+  }
+
+  async function handleQuickToggleTeacherPapers() {
+    if (!firebaseUser || togglingTeacherPapers) return;
+    setTogglingTeacherPapers(true);
+    try {
+      const nextAllowed = systemSettings.allowTeacherPaperCreation === false;
+      await toggleTeacherPaperCreation(nextAllowed, firebaseUser.uid, systemSettings);
+    } finally {
+      setTogglingTeacherPapers(false);
     }
   }
 
@@ -236,6 +261,11 @@ export function AdminDashboard() {
           <div className="font-display text-base sm:text-lg font-bold text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-amber-500 to-orange-600 shrink-0" />
             <span>MeritExam Admin</span>
+            {isMainAdmin && (
+              <span className="hidden sm:inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 rounded">
+                Main Admin
+              </span>
+            )}
           </div>
 
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
@@ -370,6 +400,28 @@ export function AdminDashboard() {
             </button>
             <button
               type="button"
+              disabled={togglingTeacherPapers}
+              onClick={() => void handleQuickToggleTeacherPapers()}
+              className={`px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors disabled:opacity-60 border ${
+                systemSettings.allowTeacherPaperCreation === false
+                  ? 'bg-emerald-700 hover:bg-emerald-800 border-emerald-700 text-white'
+                  : 'bg-orange-50 hover:bg-orange-100 border-orange-300 text-orange-800'
+              }`}
+            >
+              {systemSettings.allowTeacherPaperCreation === false ? (
+                <>
+                  <PlayCircle className="w-4 h-4" />
+                  Allow Teachers&apos; Papers
+                </>
+              ) : (
+                <>
+                  <PauseCircle className="w-4 h-4" />
+                  Stop Teachers&apos; Papers
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('settings')}
               className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-teal-800 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
             >
@@ -448,8 +500,8 @@ export function AdminDashboard() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-                  {(['all', 'pending', 'approved', 'rejected'] as const).map((st) => (
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+                  {(['all', 'pending', 'approved', 'paused', 'rejected'] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -496,14 +548,28 @@ export function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 text-sm">
-                    {filteredUsers.map((account) => (
+                    {filteredUsers.map((account) => {
+                      const isAccountMainAdmin = BOOTSTRAPPED_ADMIN_EMAILS.includes(
+                        account.email.toLowerCase(),
+                      );
+                      return (
                       <tr key={account.uid} className="hover:bg-slate-50">
                         <td className="py-3 px-4">
                           <div className="font-medium text-slate-900">{account.fullName}</div>
                           <div className="text-xs text-slate-500">{account.email}</div>
                         </td>
                         <td className="py-3 px-4 capitalize font-medium text-slate-800">
-                          {account.role}
+                          {isAccountMainAdmin ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                              <ShieldCheck className="w-3.5 h-3.5" /> Main Admin
+                            </span>
+                          ) : account.role === 'admin' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                              Admin
+                            </span>
+                          ) : (
+                            account.role
+                          )}
                         </td>
                         <td className="py-3 px-4 text-slate-600">
                           {account.grade} · {account.subject}
@@ -520,6 +586,11 @@ export function AdminDashboard() {
                           {account.status === 'pending' && (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
                               <Clock className="w-3.5 h-3.5" /> Pending
+                            </span>
+                          )}
+                          {account.status === 'paused' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700">
+                              <PauseCircle className="w-3.5 h-3.5" /> Paused
                             </span>
                           )}
                           {account.status === 'rejected' && (
@@ -546,7 +617,7 @@ export function AdminDashboard() {
                             </button>
                           )}
 
-                          {account.role !== 'admin' && account.status === 'approved' && (
+                          {isMainAdmin && account.role !== 'admin' && account.status === 'approved' && (
                             <button
                               type="button"
                               onClick={() =>
@@ -581,12 +652,67 @@ export function AdminDashboard() {
                             </button>
                           )}
 
-                          {account.role === 'admin' && (
+                          {account.role === 'admin' && isAccountMainAdmin && (
+                            <span className="text-xs font-medium text-amber-700">
+                              Main Admin (Protected)
+                            </span>
+                          )}
+
+                          {account.role === 'admin' && !isAccountMainAdmin && isMainAdmin && (
+                            <>
+                              {account.status === 'paused' ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void pauseOrResumeAdmin({
+                                      uid: account.uid,
+                                      email: account.email,
+                                      pause: false,
+                                      mainAdminUid: firebaseUser.uid,
+                                    })
+                                  }
+                                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <PlayCircle className="w-3.5 h-3.5" /> Resume Admin
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void pauseOrResumeAdmin({
+                                      uid: account.uid,
+                                      email: account.email,
+                                      pause: true,
+                                      mainAdminUid: firebaseUser.uid,
+                                    })
+                                  }
+                                  className="px-3 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-300 hover:bg-amber-100 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <PauseCircle className="w-3.5 h-3.5" /> Pause Admin
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void revokeAdminAccess({
+                                    uid: account.uid,
+                                    mainAdminUid: firebaseUser.uid,
+                                  })
+                                }
+                                className="px-3 py-1.5 text-xs font-semibold text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" /> Revoke
+                              </button>
+                            </>
+                          )}
+
+                          {account.role === 'admin' && !isAccountMainAdmin && !isMainAdmin && (
                             <span className="text-xs text-slate-400">Administrator</span>
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -742,7 +868,7 @@ export function AdminDashboard() {
             </div>
 
             {/* Additional Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-200 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-200 items-center">
               <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
                 <input
                   type="checkbox"
@@ -756,6 +882,23 @@ export function AdminDashboard() {
                   </div>
                   <div className="text-xs text-slate-500">
                     Students can launch instant MCQs by class & subject
+                  </div>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowTeacherPaperCreation}
+                  onChange={(e) => setAllowTeacherPaperCreation(e.target.checked)}
+                  className="w-4 h-4 accent-blue-700"
+                />
+                <div>
+                  <div className="text-xs font-semibold text-slate-900">
+                    Allow Teachers to Create Papers
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Turn off to immediately stop teachers from creating new papers
                   </div>
                 </div>
               </label>

@@ -31,8 +31,8 @@
         },
         "status": {
           "type": "string",
-          "enum": ["pending", "approved", "rejected"],
-          "description": "Admin approval status. Students and teachers start as pending until verified by Admin."
+          "enum": ["pending", "approved", "rejected", "paused"],
+          "description": "Admin approval status. Students and teachers start as pending until verified by Admin; secondary admins can be temporarily paused by Main Admin."
         },
         "grade": {
           "type": "string",
@@ -96,10 +96,20 @@
           "maxLength": 128,
           "description": "UID or system identifier that granted admin access."
         },
+        "status": {
+          "type": "string",
+          "enum": ["active", "paused"],
+          "description": "Active or temporarily paused status for secondary administrators."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
           "description": "Timestamp when admin role was granted."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
         }
       },
       "required": ["uid", "email", "grantedBy", "createdAt"]
@@ -122,6 +132,10 @@
         "allowStudentInstantPractice": {
           "type": "boolean",
           "description": "Whether approved students can launch instant subject-only AI MCQ tests directly."
+        },
+        "allowTeacherPaperCreation": {
+          "type": "boolean",
+          "description": "Whether approved teachers are allowed to generate and publish new papers (Admin can pause/resume anytime)."
         },
         "defaultTimeLimitMinutes": {
           "type": "integer",

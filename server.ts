@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const BOOTSTRAPPED_ADMIN_EMAILS = [
   'meranamasimkhan@gmail.com',
   'shahzainandwalli@gmail.com',
+  'fbisemcqtest@gmail.com',
 ];
 
 function getFirebaseConfig() {
@@ -62,7 +63,19 @@ async function verifyAdminBearerToken(authHeader: string | undefined): Promise<b
       headers: { Authorization: `Bearer ${idToken}` },
     },
   );
-  return adminDocRes.ok;
+  if (!adminDocRes.ok) return false;
+  try {
+    const adminDocData = (await adminDocRes.json()) as {
+      fields?: { status?: { stringValue?: string } };
+    };
+    if (adminDocData.fields?.status?.stringValue === 'paused') {
+      return false;
+    }
+  } catch {
+    // If parsing fails, treat conservatively
+    return false;
+  }
+  return true;
 }
 
 function addDirectoryToZip(zip: JSZip, baseDir: string, currentDir: string) {

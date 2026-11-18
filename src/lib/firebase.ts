@@ -11,6 +11,7 @@ export const googleProvider = new GoogleAuthProvider();
 export const BOOTSTRAPPED_ADMIN_EMAILS = [
   'meranamasimkhan@gmail.com',
   'shahzainandwalli@gmail.com',
+  'fbisemcqtest@gmail.com',
 ];
 
 export enum OperationType {

@@ -54,6 +54,7 @@ export interface WordPaperExportInput {
   compactLayout: boolean;
   sideBySideOr: boolean;
   twoColumnMcqs: boolean;
+  showOmrGrid: boolean;
   separateSectionA: boolean;
   includeAnswerKey: boolean;
 }
@@ -374,9 +375,17 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     compactLayout,
     sideBySideOr,
     twoColumnMcqs,
+    showOmrGrid,
     separateSectionA,
     includeAnswerKey,
   } = input;
+
+  const CIRCLED_DIGITS = ['⓪', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'];
+  const CIRCLED_LETTERS = ['Ⓐ', 'Ⓑ', 'Ⓒ', 'Ⓓ'];
+  const optionTag = (optIdx: number) =>
+    paperStyle === 'fbise_official'
+      ? `${CIRCLED_LETTERS[optIdx] ?? `(${String.fromCharCode(65 + optIdx)})`} `
+      : `(${String.fromCharCode(65 + optIdx)}) `;
 
   const qFontSize = compactLayout ? 18 : 20;
   const optFontSize = compactLayout ? 17 : 19;
@@ -468,62 +477,213 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
       }),
     );
 
-    // Roll No. + Invigilator Bar
-    headerRows.push(
-      new TableRow({
-        cantSplit: true,
-        children: [
-          new TableCell({
-            columnSpan: 2,
-            borders: {
-              top: NO_CELL_BORDERS.top,
-              left: NO_CELL_BORDERS.left,
-              right: NO_CELL_BORDERS.right,
-              bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-            },
-            margins: { top: 70, bottom: 70, left: 120, right: 80 },
-            children: [
-              new Paragraph({
-                spacing: { before: 0, after: 0 },
-                children: [
-                  new TextRun({ text: 'ROLL NO:  ', bold: true, size: 19, font: 'Calibri' }),
-                  new TextRun({
-                    text: '[   ] [   ] [   ] [   ] [   ] [   ]',
-                    bold: true,
-                    size: 19,
-                    font: 'Consolas',
-                  }),
-                ],
-              }),
-            ],
-          }),
-          new TableCell({
-            columnSpan: 2,
-            borders: {
-              top: NO_CELL_BORDERS.top,
-              left: NO_CELL_BORDERS.left,
-              right: NO_CELL_BORDERS.right,
-              bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-            },
-            margins: { top: 70, bottom: 70, left: 80, right: 120 },
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.RIGHT,
-                spacing: { before: 0, after: 0 },
-                children: [
-                  new TextRun({
-                    text: 'Name: ___________________   Sign. Dy. Supdt.: ____________',
-                    size: 18,
-                    color: '1E293B',
-                    font: 'Calibri',
-                  }),
-                ],
-              }),
-            ],
-          }),
-        ],
-      }),
-    );
+    // Roll No. + Version No. OMR Bubbles + Invigilator / Candidate Details
+    if (showOmrGrid) {
+      const omrDigitParagraphs = (cols: number, label: string, boxText: string): Paragraph[] => [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 10, after: 25 },
+          children: [
+            new TextRun({ text: label, bold: true, size: 17, color: '0F172A', font: 'Calibri' }),
+          ],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 0, after: 35 },
+          children: [
+            new TextRun({
+              text: boxText,
+              bold: true,
+              size: 16,
+              color: '0F172A',
+              font: 'Consolas',
+            }),
+          ],
+        }),
+        ...CIRCLED_DIGITS.map(
+          (digitChar) =>
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: 8 },
+              children: [
+                new TextRun({
+                  text: Array.from({ length: cols }, () => digitChar).join(' '),
+                  size: 16,
+                  color: '1E293B',
+                  font: 'Segoe UI Symbol',
+                }),
+              ],
+            }),
+        ),
+      ];
+
+      headerRows.push(
+        new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              columnSpan: 4,
+              borders: {
+                top: NO_CELL_BORDERS.top,
+                left: NO_CELL_BORDERS.left,
+                right: NO_CELL_BORDERS.right,
+                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+              },
+              margins: { top: 45, bottom: 45, left: 80, right: 80 },
+              children: [
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  layout: TableLayoutType.FIXED,
+                  rows: [
+                    new TableRow({
+                      cantSplit: true,
+                      children: [
+                        new TableCell({
+                          width: { size: 34, type: WidthType.PERCENTAGE },
+                          borders: {
+                            top: NO_CELL_BORDERS.top,
+                            bottom: NO_CELL_BORDERS.bottom,
+                            left: NO_CELL_BORDERS.left,
+                            right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                          },
+                          margins: { top: 20, bottom: 20, left: 40, right: 40 },
+                          children: omrDigitParagraphs(6, 'ROLL NO.', '[ ] [ ] [ ] [ ] [ ] [ ]'),
+                        }),
+                        new TableCell({
+                          width: { size: 24, type: WidthType.PERCENTAGE },
+                          borders: {
+                            top: NO_CELL_BORDERS.top,
+                            bottom: NO_CELL_BORDERS.bottom,
+                            left: NO_CELL_BORDERS.left,
+                            right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                          },
+                          margins: { top: 20, bottom: 20, left: 40, right: 40 },
+                          children: omrDigitParagraphs(4, 'VERSION NO.', '[ ] [ ] [ ] [ ]'),
+                        }),
+                        new TableCell({
+                          width: { size: 42, type: WidthType.PERCENTAGE },
+                          borders: NO_CELL_BORDERS,
+                          margins: { top: 30, bottom: 20, left: 100, right: 40 },
+                          children: [
+                            new Paragraph({
+                              spacing: { before: 15, after: 45 },
+                              children: [
+                                new TextRun({
+                                  text: "Candidate's Name: _______________________",
+                                  size: 17,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                            new Paragraph({
+                              spacing: { before: 0, after: 45 },
+                              children: [
+                                new TextRun({
+                                  text: "Candidate's Sign.: _______________________",
+                                  size: 17,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                            new Paragraph({
+                              spacing: { before: 0, after: 55 },
+                              children: [
+                                new TextRun({
+                                  text: 'Sign. of Dy. Supdt.: _____________________',
+                                  size: 17,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                            new Paragraph({
+                              border: {
+                                top: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                                left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                                right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                              },
+                              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+                              spacing: { before: 20, after: 0 },
+                              children: [
+                                new TextRun({
+                                  text: ' Use Blue/Black Pen only (Lead pencil prohibited). Fill circle completely: ● (Correct) | ✕ ✓ (Wrong). Do not overwrite.',
+                                  size: 15,
+                                  color: '334155',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                          ],
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      );
+    } else {
+      headerRows.push(
+        new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              columnSpan: 2,
+              borders: {
+                top: NO_CELL_BORDERS.top,
+                left: NO_CELL_BORDERS.left,
+                right: NO_CELL_BORDERS.right,
+                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+              },
+              margins: { top: 70, bottom: 70, left: 120, right: 80 },
+              children: [
+                new Paragraph({
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({ text: 'ROLL NO:  ', bold: true, size: 19, font: 'Calibri' }),
+                    new TextRun({
+                      text: '[   ] [   ] [   ] [   ] [   ] [   ]',
+                      bold: true,
+                      size: 19,
+                      font: 'Consolas',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              columnSpan: 2,
+              borders: {
+                top: NO_CELL_BORDERS.top,
+                left: NO_CELL_BORDERS.left,
+                right: NO_CELL_BORDERS.right,
+                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+              },
+              margins: { top: 70, bottom: 70, left: 80, right: 120 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.RIGHT,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: 'Name: ___________________   Sign. Dy. Supdt.: ____________',
+                      size: 18,
+                      color: '1E293B',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      );
+    }
 
     // Metadata Row
     const metaValues = [
@@ -560,46 +720,6 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         ),
       }),
     );
-
-    if (topic?.trim()) {
-      headerRows.push(
-        new TableRow({
-          cantSplit: true,
-          children: [
-            new TableCell({
-              columnSpan: 4,
-              borders: {
-                top: { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' },
-                left: NO_CELL_BORDERS.left,
-                right: NO_CELL_BORDERS.right,
-                bottom: NO_CELL_BORDERS.bottom,
-              },
-              margins: { top: 55, bottom: 65, left: 100, right: 100 },
-              children: [
-                new Paragraph({
-                  spacing: { before: 0, after: 0 },
-                  children: [
-                    new TextRun({
-                      text: 'Syllabus / Chapters: ',
-                      size: 18,
-                      color: '475569',
-                      font: 'Calibri',
-                    }),
-                    new TextRun({
-                      text: topic.trim(),
-                      bold: true,
-                      size: 18,
-                      color: '0F172A',
-                      font: 'Calibri',
-                    }),
-                  ],
-                }),
-              ],
-            }),
-          ],
-        }),
-      );
-    }
 
     children.push(
       new Table({
@@ -694,7 +814,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         spacing: { before: 0, after: 60 },
         children: [
           new TextRun({
-            text: `Class: ${GRADE_LABELS[grade]}   ·   Subject: ${subject}${topic?.trim() ? `   ·   Syllabus: ${topic.trim()}` : ''}`,
+            text: `Class: ${GRADE_LABELS[grade]}   ·   Subject: ${subject}`,
             size: 20,
             color: '334155',
             font: 'Calibri',
@@ -771,11 +891,11 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           if (!qItem) return [new Paragraph({ children: [] })];
           const optLine1 = [0, 1]
             .filter((idx) => qItem.options[idx] !== undefined)
-            .map((idx) => `(${String.fromCharCode(65 + idx)}) ${qItem.options[idx]}`)
+            .map((idx) => `${optionTag(idx)}${qItem.options[idx]}`)
             .join('    ');
           const optLine2 = [2, 3]
             .filter((idx) => qItem.options[idx] !== undefined)
-            .map((idx) => `(${String.fromCharCode(65 + idx)}) ${qItem.options[idx]}`)
+            .map((idx) => `${optionTag(idx)}${qItem.options[idx]}`)
             .join('    ');
 
           return [
@@ -892,11 +1012,11 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                       spacing: { before: 0, after: 0 },
                       children: [
                         new TextRun({
-                          text: `(${leftLetter}) `,
+                          text: optionTag(r),
                           bold: true,
                           size: optFontSize,
                           color: '1E293B',
-                          font: 'Calibri',
+                          font: paperStyle === 'fbise_official' ? 'Segoe UI Symbol' : 'Calibri',
                         }),
                         new TextRun({
                           text: leftText,
@@ -918,11 +1038,11 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                       children: rightLetter
                         ? [
                             new TextRun({
-                              text: `(${rightLetter}) `,
+                              text: optionTag(r + 1),
                               bold: true,
                               size: optFontSize,
                               color: '1E293B',
-                              font: 'Calibri',
+                              font: paperStyle === 'fbise_official' ? 'Segoe UI Symbol' : 'Calibri',
                             }),
                             new TextRun({
                               text: rightText,

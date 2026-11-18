@@ -55,6 +55,7 @@ export function PrintablePaperModal({
   const [paperSize, setPaperSize] = useState<'a4' | 'legal'>('a4');
   const [sideBySideOr, setSideBySideOr] = useState(true);
   const [twoColumnMcqs, setTwoColumnMcqs] = useState(false);
+  const [showOmrGrid, setShowOmrGrid] = useState(true);
   const [paperStyle, setPaperStyle] = useState<'fbise_official' | 'standard'>(
     board === 'fbise_nbf' ? 'fbise_official' : 'standard',
   );
@@ -146,6 +147,7 @@ export function PrintablePaperModal({
         compactLayout,
         sideBySideOr,
         twoColumnMcqs,
+        showOmrGrid,
         separateSectionA,
         includeAnswerKey,
       });
@@ -243,6 +245,17 @@ export function PrintablePaperModal({
                   className="w-4 h-4 accent-blue-700"
                 />
                 2-Col MCQs
+              </label>
+            )}
+            {paperStyle === 'fbise_official' && (
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showOmrGrid}
+                  onChange={(e) => setShowOmrGrid(e.target.checked)}
+                  className="w-4 h-4 accent-blue-700"
+                />
+                OMR Circles (Roll/Version)
               </label>
             )}
             {paperStyle === 'fbise_official' && questions.length > 0 && (shortQuestions.length > 0 || longQuestions.length > 0) && (
@@ -471,26 +484,117 @@ export function PrintablePaperModal({
               </div>
             </div>
 
-            {/* Official Roll Number Boxes + Invigilator Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-800 border-b border-slate-300 pb-2">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold uppercase">Roll No.</span>
-                <div className="inline-flex">
-                  {[0, 1, 2, 3, 4, 5].map((box) => (
-                    <span
-                      key={box}
-                      className="w-5 h-5 border border-slate-900 -ml-px first:ml-0 inline-block"
-                    />
-                  ))}
+            {/* Official Roll No. & Version No. OMR Bubble Sheet Header */}
+            {showOmrGrid ? (
+              <div className="grid grid-cols-1 sm:grid-cols-[auto_auto_1fr] print:grid-cols-[auto_auto_1fr] gap-2.5 border-b border-slate-300 pb-2 text-[11px] text-slate-900">
+                {/* Roll No. 6-Digit Box + 0-9 OMR Circles */}
+                <div className="border border-slate-800 px-2 py-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-center mb-1">
+                    Roll No.
+                  </div>
+                  <div className="grid grid-cols-6 gap-0.5 mb-1">
+                    {[0, 1, 2, 3, 4, 5].map((col) => (
+                      <div
+                        key={col}
+                        className="w-4 h-4 border border-slate-900 mx-auto"
+                      />
+                    ))}
+                  </div>
+                  <div className="space-y-0.5">
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                      <div key={digit} className="grid grid-cols-6 gap-0.5">
+                        {[0, 1, 2, 3, 4, 5].map((col) => (
+                          <span
+                            key={col}
+                            className="w-3.5 h-3.5 rounded-full border border-slate-800 text-[7.5px] font-mono font-semibold flex items-center justify-center mx-auto leading-none"
+                          >
+                            {digit}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Version No. 4-Digit Box + 0-9 OMR Circles */}
+                <div className="border border-slate-800 px-2 py-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-center mb-1">
+                    Version No.
+                  </div>
+                  <div className="grid grid-cols-4 gap-0.5 mb-1">
+                    {[0, 1, 2, 3].map((col) => (
+                      <div
+                        key={col}
+                        className="w-4 h-4 border border-slate-900 mx-auto"
+                      />
+                    ))}
+                  </div>
+                  <div className="space-y-0.5">
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                      <div key={digit} className="grid grid-cols-4 gap-0.5">
+                        {[0, 1, 2, 3].map((col) => (
+                          <span
+                            key={col}
+                            className="w-3.5 h-3.5 rounded-full border border-slate-800 text-[7.5px] font-mono font-semibold flex items-center justify-center mx-auto leading-none"
+                          >
+                            {digit}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Candidate Details, Signatures & OMR Bubble Instructions */}
+                <div className="flex flex-col justify-between gap-1.5 pl-0.5">
+                  <div className="space-y-1.5 text-[11px] font-medium">
+                    <div>Candidate&apos;s Name: ________________________________</div>
+                    <div>Candidate&apos;s Sign.: ________________________________</div>
+                    <div>Sign. of Dy. Supdt.: _______________________________</div>
+                  </div>
+                  <div className="border border-slate-400 bg-slate-50 px-2 py-1.5 text-[9.5px] leading-snug text-slate-800 space-y-1">
+                    <div className="font-bold uppercase tracking-wide text-slate-950">
+                      Instructions for Filling OMR Circles (Bubbles):
+                    </div>
+                    <div>
+                      1. Use <strong>Blue or Black Ballpoint Pen</strong> only (Lead pencil is strictly prohibited).
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>2. Fill circle completely:</span>
+                      <span className="inline-flex items-center gap-1 font-semibold">
+                        <span className="w-3 h-3 rounded-full bg-slate-900 inline-block" /> Correct
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-slate-600">
+                        <span className="w-3 h-3 rounded-full border border-slate-700 inline-flex items-center justify-center text-[8px]">✕</span>
+                        <span className="w-3 h-3 rounded-full border border-slate-700 inline-flex items-center justify-center text-[8px]">✓</span>
+                        Wrong
+                      </span>
+                    </div>
+                    <div>3. Do not cut, erase, or overwrite any bubble.</div>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-3 font-medium">
-                <span>Name: _______________________</span>
-                <span>Sign. of Dy. Supdt.: _____________</span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-800 border-b border-slate-300 pb-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold uppercase">Roll No.</span>
+                  <div className="inline-flex">
+                    {[0, 1, 2, 3, 4, 5].map((box) => (
+                      <span
+                        key={box}
+                        className="w-5 h-5 border border-slate-900 -ml-px first:ml-0 inline-block"
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 font-medium">
+                  <span>Name: _______________________</span>
+                  <span>Sign. of Dy. Supdt.: _____________</span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Paper Metadata Grid */}
+            {/* Paper Metadata Grid (No chapter names printed) */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1 text-xs text-slate-800">
               <div>
                 Class: <strong className="text-slate-950">{GRADE_LABELS[grade]}</strong>
@@ -506,11 +610,6 @@ export function PrintablePaperModal({
                 {formattedDate ? ` · ${formattedDate}` : ''}
               </div>
             </div>
-            {topic && (
-              <div className="text-[11px] text-slate-700 border-t border-slate-200 pt-1">
-                Syllabus / Chapters: <strong className="text-slate-900">{topic}</strong>
-              </div>
-            )}
           </div>
         ) : (
           <div data-pdf-block="true" className={`border-b-2 border-slate-900 ${compactLayout ? 'pb-2.5' : 'pb-4'}`}>
@@ -545,12 +644,6 @@ export function PrintablePaperModal({
               <span>Class: <strong>{GRADE_LABELS[grade]}</strong></span>
               <span>·</span>
               <span>Subject: <strong>{subject}</strong></span>
-              {topic && (
-                <>
-                  <span>·</span>
-                  <span>Syllabus: <strong>{topic}</strong></span>
-                </>
-              )}
             </div>
             <div className={`${compactLayout ? 'mt-2.5 pt-2' : 'mt-4 pt-3'} grid grid-cols-2 gap-6 text-xs text-slate-600 border-t border-slate-200`}>
               <div>Student Name: ______________________________________</div>
@@ -609,9 +702,15 @@ export function PrintablePaperModal({
                     {q.options.map((opt, optIdx) => {
                       const letter = String.fromCharCode(65 + optIdx);
                       return (
-                        <div key={optIdx} className="leading-tight">
-                          <span className="font-mono font-semibold mr-1">({letter})</span>
-                          {opt}
+                        <div key={optIdx} className="leading-tight flex items-start gap-1">
+                          {paperStyle === 'fbise_official' ? (
+                            <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-slate-900 text-[8.5px] font-mono font-bold shrink-0 mt-0.5">
+                              {letter}
+                            </span>
+                          ) : (
+                            <span className="font-mono font-semibold mr-0.5 shrink-0">({letter})</span>
+                          )}
+                          <span>{opt}</span>
                         </div>
                       );
                     })}

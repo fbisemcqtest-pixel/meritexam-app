@@ -1,11 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   Clock,
   Flag,
   Lock,
+  Monitor,
+  ShieldAlert,
+  ShieldCheck,
+  Smartphone,
   XCircle,
 } from 'lucide-react';
 import {
@@ -23,6 +28,12 @@ interface TestRunnerProps {
   previewMode?: boolean;
   existingAttempt?: TestAttempt | null;
   onExit: () => void;
+}
+
+function getScheduledEndMs(test: MCQTest): number | null {
+  if (!test.scheduledEndAt) return null;
+  const ms = new Date(test.scheduledEndAt).getTime();
+  return Number.isNaN(ms) ? null : ms;
 }
 
 export function TestRunner({
@@ -57,7 +68,21 @@ export function TestRunner({
   const [flagged, setFlagged] = useState<boolean[]>(() =>
     new Array(test.questions.length).fill(false),
   );
-  const [secondsLeft, setSecondsLeft] = useState(test.durationMinutes * 60);
+  const scheduledEndMs = !previewMode && !existingAttempt ? getScheduledEndMs(test) : null;
+  const [windowClosedOnEntry, setWindowClosedOnEntry] = useState<boolean>(
+    () => scheduledEndMs !== null && Date.now() >= scheduledEndMs,
+  );
+  const [secondsLeft, setSecondsLeft] = useState<number>(() => {
+    const durationSecs = test.durationMinutes * 60;
+    if (scheduledEndMs === null) return durationSecs;
+    const remainingSecs = Math.max(0, Math.floor((scheduledEndMs - Date.now()) / 1000));
+    return Math.min(durationSecs, remainingSecs);
+  });
+  const [lockAccepted, setLockAccepted] = useState<boolean>(
+    () => previewMode || Boolean(existingAttempt),
+  );
+  const [fullscreenLocked, setFullscreenLocked] = useState(false);
+  const [confirmExitCancel, setConfirmExitCancel] = useState(false);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submittedAttempt, setSubmittedAttempt] = useState<TestAttempt | null>(
@@ -65,11 +90,220 @@ export function TestRunner({
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const isMobileDevice =
+    typeof window !== 'undefined' &&
+    (/Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && window.innerWidth < 1024));
+
+  // Refs for latest answers & lock lifecycle so event listeners never read stale state
+  const answersRef = useRef(answers);
+  const shortAnswersRef = useRef(shortAnswers);
+  const longAnswersRef = useRef(longAnswers);
+  const submittingRef = useRef(submitting);
+  const submittedAttemptRef = useRef(submittedAttempt);
+  const fullscreenEngagedRef = useRef(false);
+  const isExitingNormallyRef = useRef(false);
+  const violationTriggeredRef = useRef(false);
+  const lockStartedAtRef = useRef<number>(0);
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+
+  answersRef.current = answers;
+  shortAnswersRef.current = shortAnswers;
+  longAnswersRef.current = longAnswers;
+  submittingRef.current = submitting;
+  submittedAttemptRef.current = submittedAttempt;
+
+  const releaseScreenLock = useCallback(async () => {
+    isExitingNormallyRef.current = true;
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    } catch {
+      // Ignore wake lock release errors
+    }
+    try {
+      const docWithWebkit = document as Document & {
+        webkitFullscreenElement?: Element | null;
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (docWithWebkit.webkitFullscreenElement && docWithWebkit.webkitExitFullscreen) {
+        await docWithWebkit.webkitExitFullscreen();
+      }
+    } catch {
+      // Ignore fullscreen exit errors
+    }
+    fullscreenEngagedRef.current = false;
+    setFullscreenLocked(false);
+  }, []);
+
   useEffect(() => {
-    if (submittedAttempt || previewMode) return;
+    return () => {
+      void releaseScreenLock();
+    };
+  }, [releaseScreenLock]);
+
+  const performSubmit = useCallback(
+    async (options?: { autoCancelled?: boolean; terminationReason?: string }) => {
+      if (submittingRef.current || submittedAttemptRef.current) return;
+      setErrorMsg(null);
+
+      if (previewMode) {
+        let score = 0;
+        test.questions.forEach((q, idx) => {
+          if (answersRef.current[idx] === q.correctIndex) score += 1;
+        });
+        const percentage =
+          test.questions.length > 0
+            ? Math.round((score / test.questions.length) * 1000) / 10
+            : 100;
+        const marksPerQuestion = test.marksPerQuestion ?? 1;
+        const obtainedMarks = Math.round(score * marksPerQuestion * 100) / 100;
+        const totalMarks = Math.round(test.questions.length * marksPerQuestion * 100) / 100;
+        setSubmittedAttempt({
+          id: 'preview',
+          testId: test.id,
+          testTitle: test.title,
+          testCreatorId: test.createdBy,
+          grade: test.grade,
+          subject: test.subject,
+          studentId: studentProfile.uid,
+          studentName: studentProfile.fullName,
+          studentIdentifier: studentProfile.identifier,
+          answers: answersRef.current,
+          shortAnswers: shortAnswersRef.current,
+          longAnswers: longAnswersRef.current,
+          score,
+          totalQuestions: test.questions.length,
+          marksPerQuestion,
+          obtainedMarks,
+          totalMarks,
+          percentage,
+          deliveryModeUsed: 'instant',
+          resultReleased: true,
+          status: 'reviewed',
+          releasedBy: 'preview',
+        });
+        return;
+      }
+
+      submittingRef.current = true;
+      setSubmitting(true);
+      await releaseScreenLock();
+
+      try {
+        const attempt = await submitTestAttempt({
+          test,
+          studentId: studentProfile.uid,
+          studentName: studentProfile.fullName,
+          studentIdentifier: studentProfile.identifier,
+          answers: answersRef.current,
+          shortAnswers: shortAnswersRef.current,
+          longAnswers: longAnswersRef.current,
+          globalSettings: systemSettings,
+          autoCancelled: options?.autoCancelled,
+          terminationReason: options?.terminationReason,
+        });
+        submittedAttemptRef.current = attempt;
+        setSubmittedAttempt(attempt);
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Failed to submit test.');
+      } finally {
+        submittingRef.current = false;
+        setSubmitting(false);
+        setConfirmSubmit(false);
+        setConfirmExitCancel(false);
+      }
+    },
+    [previewMode, releaseScreenLock, studentProfile, systemSettings, test],
+  );
+
+  const triggerAutoCancelViolation = useCallback(
+    (reason: string) => {
+      if (
+        previewMode ||
+        existingAttempt ||
+        submittedAttemptRef.current ||
+        violationTriggeredRef.current
+      ) {
+        return;
+      }
+      violationTriggeredRef.current = true;
+      void performSubmit({
+        autoCancelled: true,
+        terminationReason: reason,
+      });
+    },
+    [existingAttempt, performSubmit, previewMode],
+  );
+
+  async function handleActivateLockAndStart() {
+    setErrorMsg(null);
+    if (scheduledEndMs !== null && Date.now() >= scheduledEndMs) {
+      setWindowClosedOnEntry(true);
+      return;
+    }
+
+    isExitingNormallyRef.current = false;
+    violationTriggeredRef.current = false;
+
+    // Request Fullscreen (works on Desktop, Laptop, and Android/Mobile browsers)
+    try {
+      const el = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      }
+      const docWithWebkit = document as Document & { webkitFullscreenElement?: Element | null };
+      if (document.fullscreenElement || docWithWebkit.webkitFullscreenElement) {
+        fullscreenEngagedRef.current = true;
+        setFullscreenLocked(true);
+      }
+    } catch {
+      // Fullscreen may be blocked on some iOS Safari / restricted webviews; active viewport & tab/app lock still runs
+      fullscreenEngagedRef.current = false;
+    }
+
+    // Request Screen Wake Lock to keep mobile/laptop screen awake during paper
+    try {
+      const navWithWake = navigator as Navigator & {
+        wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+      };
+      if (navWithWake.wakeLock) {
+        wakeLockRef.current = await navWithWake.wakeLock.request('screen');
+      }
+    } catch {
+      // WakeLock optional
+    }
+
+    // Guard browser / mobile back navigation
+    try {
+      window.history.pushState({ meritExamLocked: true }, '', window.location.href);
+    } catch {
+      // Ignore history push failures
+    }
+
+    if (scheduledEndMs !== null) {
+      const remainingSecs = Math.max(1, Math.floor((scheduledEndMs - Date.now()) / 1000));
+      setSecondsLeft(Math.min(test.durationMinutes * 60, remainingSecs));
+    }
+    lockStartedAtRef.current = Date.now();
+    setLockAccepted(true);
+  }
+
+  // Countdown timer runs only after Screen Lock is activated
+  useEffect(() => {
+    if (!lockAccepted || submittedAttempt || previewMode || windowClosedOnEntry) return;
     const timer = window.setInterval(() => {
+      const hitCutoff = scheduledEndMs !== null && Date.now() >= scheduledEndMs;
       setSecondsLeft((prev) => {
-        if (prev <= 1) {
+        if (hitCutoff || prev <= 1) {
           window.clearInterval(timer);
           void performSubmit();
           return 0;
@@ -78,8 +312,114 @@ export function TestRunner({
       });
     }, 1000);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submittedAttempt, previewMode]);
+  }, [lockAccepted, submittedAttempt, previewMode, windowClosedOnEntry, scheduledEndMs, performSubmit]);
+
+  // Strict Anti-Cheat Screen Lock Listeners during active locked exam
+  useEffect(() => {
+    if (!lockAccepted || submittedAttempt || previewMode || windowClosedOnEntry) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        triggerAutoCancelViolation(
+          'Screen Lock Violation: Switched tab, minimized browser, or left exam app.',
+        );
+      }
+    };
+
+    const handleFullscreenChange = () => {
+      if (isExitingNormallyRef.current || !fullscreenEngagedRef.current) return;
+      const docWithWebkit = document as Document & { webkitFullscreenElement?: Element | null };
+      const stillFullscreen = Boolean(
+        document.fullscreenElement || docWithWebkit.webkitFullscreenElement,
+      );
+      if (!stillFullscreen) {
+        triggerAutoCancelViolation(
+          'Screen Lock Violation: Exited Fullscreen mode before submitting the paper.',
+        );
+      }
+    };
+
+    const handlePopState = () => {
+      triggerAutoCancelViolation(
+        'Screen Lock Violation: Attempted to press Back or leave the locked paper.',
+      );
+    };
+
+    const handlePageHide = () => {
+      triggerAutoCancelViolation(
+        'Screen Lock Violation: Closed or navigated away from the locked paper.',
+      );
+    };
+
+    let blurTimer: number | undefined;
+    const handleWindowBlur = () => {
+      // Enforce window blur on top-level windows (live Desktop/Laptop/Mobile) after brief OS-toast grace
+      if (window !== window.top) return;
+      if (Date.now() - lockStartedAtRef.current < 450) return;
+      blurTimer = window.setTimeout(() => {
+        if (!document.hasFocus() && !document.hidden) {
+          triggerAutoCancelViolation(
+            'Screen Lock Violation: Switched focus to another window or application.',
+          );
+        }
+      }, 180);
+    };
+
+    const handleWindowFocus = () => {
+      if (blurTimer !== undefined) {
+        window.clearTimeout(blurTimer);
+        blurTimer = undefined;
+      }
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    const handleClipboardBlock = (e: ClipboardEvent) => {
+      e.preventDefault();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (
+        e.key === 'F12' ||
+        ((e.ctrlKey || e.metaKey) && ['c', 'x', 'v', 'u', 'p', 's'].includes(key)) ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i', 'j', 'c'].includes(key))
+      ) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('copy', handleClipboardBlock);
+    document.addEventListener('cut', handleClipboardBlock);
+    document.addEventListener('paste', handleClipboardBlock);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      if (blurTimer !== undefined) window.clearTimeout(blurTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('copy', handleClipboardBlock);
+      document.removeEventListener('cut', handleClipboardBlock);
+      document.removeEventListener('paste', handleClipboardBlock);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [lockAccepted, submittedAttempt, previewMode, windowClosedOnEntry, triggerAutoCancelViolation]);
 
   function selectOption(optIdx: number) {
     if (submittedAttempt) return;
@@ -90,70 +430,6 @@ export function TestRunner({
     setFlagged((prev) => prev.map((v, i) => (i === currentIdx ? !v : v)));
   }
 
-  async function performSubmit() {
-    if (submitting || submittedAttempt) return;
-    setErrorMsg(null);
-
-    if (previewMode) {
-      let score = 0;
-      test.questions.forEach((q, idx) => {
-        if (answers[idx] === q.correctIndex) score += 1;
-      });
-      const percentage =
-        test.questions.length > 0
-          ? Math.round((score / test.questions.length) * 1000) / 10
-          : 100;
-      const marksPerQuestion = test.marksPerQuestion ?? 1;
-      const obtainedMarks = Math.round(score * marksPerQuestion * 100) / 100;
-      const totalMarks = Math.round(test.questions.length * marksPerQuestion * 100) / 100;
-      setSubmittedAttempt({
-        id: 'preview',
-        testId: test.id,
-        testTitle: test.title,
-        testCreatorId: test.createdBy,
-        grade: test.grade,
-        subject: test.subject,
-        studentId: studentProfile.uid,
-        studentName: studentProfile.fullName,
-        studentIdentifier: studentProfile.identifier,
-        answers,
-        shortAnswers,
-        longAnswers,
-        score,
-        totalQuestions: test.questions.length,
-        marksPerQuestion,
-        obtainedMarks,
-        totalMarks,
-        percentage,
-        deliveryModeUsed: 'instant',
-        resultReleased: true,
-        status: 'reviewed',
-        releasedBy: 'preview',
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const attempt = await submitTestAttempt({
-        test,
-        studentId: studentProfile.uid,
-        studentName: studentProfile.fullName,
-        studentIdentifier: studentProfile.identifier,
-        answers,
-        shortAnswers,
-        longAnswers,
-        globalSettings: systemSettings,
-      });
-      setSubmittedAttempt(attempt);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to submit test.');
-    } finally {
-      setSubmitting(false);
-      setConfirmSubmit(false);
-    }
-  }
-
   const mins = Math.floor(secondsLeft / 60);
   const secs = secondsLeft % 60;
   const formattedTime = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
@@ -161,8 +437,212 @@ export function TestRunner({
   const shortAnsweredCount = shortAnswers.filter((a) => a.trim().length > 0).length;
   const longAnsweredCount = longAnswers.filter((a) => a.trim().length > 0).length;
 
+  if (windowClosedOnEntry && !submittedAttempt) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <header className="bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between">
+          <span className="font-display font-bold text-slate-900">MeritExam</span>
+          <button
+            type="button"
+            onClick={onExit}
+            className="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg cursor-pointer"
+          >
+            Return to Dashboard
+          </button>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="bg-white border border-red-200 rounded-xl p-8 max-w-md w-full text-center space-y-4">
+            <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-200 text-red-700 flex items-center justify-center mx-auto">
+              <Lock className="w-6 h-6" />
+            </div>
+            <h1 className="font-display text-xl font-bold text-slate-900">
+              Paper Time Window Closed
+            </h1>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              The permitted window for <span className="font-semibold text-slate-900">{test.title}</span>{' '}
+              closed at{' '}
+              <span className="font-semibold text-slate-900">
+                {scheduledEndMs !== null ? new Date(scheduledEndMs).toLocaleString() : 'cutoff time'}
+              </span>
+              . Expired papers are no longer accessible.
+            </p>
+            <button
+              type="button"
+              onClick={onExit}
+              className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!previewMode && !existingAttempt && !lockAccepted && !submittedAttempt) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <header className="bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between">
+          <div className="inline-flex items-center gap-2 font-display font-bold text-slate-900">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span>MeritExam Screen Lock</span>
+          </div>
+          <button
+            type="button"
+            onClick={onExit}
+            className="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg cursor-pointer"
+          >
+            Back to Dashboard
+          </button>
+        </header>
+
+        <div className="flex-1 flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white border-2 border-emerald-200 rounded-2xl overflow-hidden max-w-lg w-full shadow-sm">
+            <div className="h-2 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600" />
+            <div className="p-6 sm:p-8 space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  {isMobileDevice ? (
+                    <>
+                      <Smartphone className="w-3.5 h-3.5" />
+                      Mobile / Tablet Mode
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-3.5 h-3.5" />
+                      Desktop / Laptop Mode
+                    </>
+                  )}
+                </span>
+              </div>
+
+              <div>
+                <h1 className="font-display text-xl font-bold text-slate-900">
+                  Activate Green Screen Lock & Start Paper
+                </h1>
+                <p className="text-sm text-slate-600 mt-1">
+                  {test.title} · <span className="font-semibold text-slate-800">{test.grade} {test.subject}</span> · {test.durationMinutes} Minutes
+                </p>
+              </div>
+
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-2.5 text-xs sm:text-sm text-emerald-950">
+                <div className="font-bold text-emerald-900 flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Exam Screen Lock Rules (Mobile, Desktop & Laptop)</span>
+                </div>
+                <ul className="space-y-1.5 text-xs text-emerald-900 list-disc pl-5 leading-relaxed">
+                  <li>
+                    Starting this paper engages <strong>Green Screen Lock</strong> (Fullscreen + Screen Wake Lock) until you finish and submit.
+                  </li>
+                  <li>
+                    Do <strong>not</strong> switch tabs, open another app, minimize the browser, press Back, or exit Fullscreen.
+                  </li>
+                  <li>
+                    If you navigate away from the locked exam screen, your paper will be{' '}
+                    <strong className="text-red-700">automatically submitted and cancelled (ended)</strong> immediately.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => void handleActivateLockAndStart()}
+                  className="flex-1 py-3 px-4 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl inline-flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-colors"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  Activate Green Screen Lock & Start
+                </button>
+                <button
+                  type="button"
+                  onClick={onExit}
+                  className="py-3 px-4 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Post-Submission View
   if (submittedAttempt) {
+    if (submittedAttempt.autoCancelled) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col">
+          <header className="bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between">
+            <span className="font-display font-bold text-slate-900">MeritExam</span>
+            <button
+              type="button"
+              onClick={onExit}
+              className="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg cursor-pointer"
+            >
+              Return to Dashboard
+            </button>
+          </header>
+
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="bg-white border-2 border-red-200 rounded-2xl p-8 max-w-lg w-full space-y-5">
+              <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center text-red-700">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h1 className="font-display text-2xl font-bold text-red-800">
+                  Paper Auto-Submitted & Cancelled
+                </h1>
+                <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+                  You navigated away from the locked exam screen during{' '}
+                  <span className="font-semibold text-slate-900">{test.title}</span>. Your current answers were automatically submitted and this paper has been terminated.
+                </p>
+              </div>
+
+              {submittedAttempt.terminationReason && (
+                <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-900 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+                  <span>{submittedAttempt.terminationReason}</span>
+                </div>
+              )}
+
+              <div className="border border-slate-200 rounded-lg divide-y divide-slate-200 text-sm bg-slate-50">
+                <div className="px-4 py-2.5 flex justify-between">
+                  <span className="text-slate-500">Class & Subject</span>
+                  <span className="font-medium text-slate-900">
+                    {test.grade} · {test.subject}
+                  </span>
+                </div>
+                {hasMcqs && (
+                  <div className="px-4 py-2.5 flex justify-between">
+                    <span className="text-slate-500">MCQs Recorded</span>
+                    <span className="font-medium text-slate-900 tabular-nums">
+                      {answeredCount} / {test.questions.length}
+                    </span>
+                  </div>
+                )}
+                <div className="px-4 py-2.5 flex justify-between">
+                  <span className="text-slate-500">Final Status</span>
+                  <span className="font-semibold text-red-700">Auto-Cancelled (Screen Lock Broken)</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={onExit}
+                className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                Back to Student Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // Option 2: Admin Controlled / Delayed Result Release
     if (!submittedAttempt.resultReleased) {
       return (
@@ -496,13 +976,23 @@ export function TestRunner({
   const activeQ = hasMcqs ? test.questions[currentIdx] : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div
+      className={`min-h-screen bg-slate-50 flex flex-col ${
+        !previewMode ? 'fixed inset-0 z-50 overflow-y-auto border-t-4 border-emerald-500 select-none overscroll-none' : ''
+      }`}
+    >
       {/* Exam Header */}
-      <header className="bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between gap-4 sticky top-0 z-20">
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-3 sticky top-0 z-20">
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
-            onClick={onExit}
+            onClick={() => {
+              if (previewMode) {
+                onExit();
+              } else {
+                setConfirmExitCancel(true);
+              }
+            }}
             className="text-xs font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -517,12 +1007,30 @@ export function TestRunner({
             <p className="text-xs text-slate-500 truncate">
               {test.schoolName ? `${test.schoolName} · ` : ''}
               {test.board === 'punjab_ptb' ? 'Punjab Board' : 'Federal NBF'} · {test.grade} · {test.subject}
-              {test.paperDate ? ` · ${test.paperDate}` : ''} · {previewMode ? 'Faculty Preview' : 'Live Assessment'}
+              {test.paperDate ? ` · ${test.paperDate}` : ''} · {previewMode ? 'Faculty Preview' : 'Locked Live Assessment'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {!previewMode && (
+            <span
+              title="Screen is locked until paper submission. Leaving this screen will auto-submit and cancel the paper."
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-emerald-600 px-2.5 sm:px-3 py-1.5 rounded-lg shadow-xs whitespace-nowrap"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {fullscreenLocked ? 'Screen Locked (Fullscreen)' : 'Green Screen Lock ON'}
+              </span>
+              <span className="sm:hidden">Locked</span>
+            </span>
+          )}
+          {!previewMode && scheduledEndMs !== null && (
+            <span className="hidden md:inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1.5 rounded-lg tabular-nums">
+              Closes: {new Date(scheduledEndMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
           {!previewMode && (
             <div
               className={`inline-flex items-center gap-1.5 text-sm font-mono font-semibold tabular-nums px-3 py-1.5 rounded-lg border ${
@@ -833,7 +1341,7 @@ export function TestRunner({
 
       {/* Confirm Submit Modal */}
       {confirmSubmit && (
-        <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-md w-full shadow-lg">
             <h3 className="font-display text-lg font-bold text-slate-900">
               Submit Assessment Paper?
@@ -866,7 +1374,7 @@ export function TestRunner({
                   .{' '}
                 </>
               )}
-              Once submitted, responses cannot be edited.
+              Once submitted, responses cannot be edited and Screen Lock will unlock.
             </p>
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
@@ -883,6 +1391,45 @@ export function TestRunner({
                 className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg cursor-pointer"
               >
                 {submitting ? 'Submitting...' : 'Confirm Submission'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Exit / Auto-Cancel Modal */}
+      {confirmExitCancel && !previewMode && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-red-200 rounded-xl p-6 max-w-md w-full shadow-lg space-y-4">
+            <div className="flex items-center gap-2.5 text-red-700">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-display text-lg font-bold text-slate-900">
+                Leave Locked Paper?
+              </h3>
+            </div>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              Screen Lock is active. Exiting before finishing will{' '}
+              <strong className="text-red-700">automatically submit and cancel</strong> your paper immediately.
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmExitCancel(false)}
+                className="px-4 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer"
+              >
+                Stay in Exam
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() =>
+                  triggerAutoCancelViolation(
+                    'Screen Lock Violation: Exited locked exam before normal submission.',
+                  )
+                }
+                className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-lg cursor-pointer"
+              >
+                {submitting ? 'Cancelling...' : 'Auto-Submit & Cancel'}
               </button>
             </div>
           </div>

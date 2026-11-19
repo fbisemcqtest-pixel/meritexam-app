@@ -20,6 +20,12 @@ import {
   getSyllabusChapters,
 } from '../types';
 import { generateMCQsFromServer, publishMCQTest } from '../services/mcqService';
+import {
+  FBISE_PATTERN_MODES,
+  FbisePatternMode,
+  formatDurationHoursMin,
+  getOfficialPattern,
+} from '../data/fbisePatterns';
 import { PrintablePaperModal } from './PrintablePaperModal';
 
 interface TestGeneratorPanelProps {
@@ -45,8 +51,10 @@ export function TestGeneratorPanel({
     defaultGrade && defaultGrade !== 'All' ? defaultGrade : '9th';
   const initialSubject: SubjectName =
     defaultSubject && defaultSubject !== 'All' ? defaultSubject : 'Physics';
+  const initialPattern = getOfficialPattern('fbise_nbf', initialGrade, initialSubject, 'official_new');
 
   const [board, setBoard] = useState<ExamBoard>('fbise_nbf');
+  const [patternMode, setPatternMode] = useState<FbisePatternMode>('official_new');
   const [schoolName, setSchoolName] = useState('');
   const [examLabel, setExamLabel] = useState('');
   const examLabelInputRef = useRef<HTMLInputElement | null>(null);
@@ -56,22 +64,27 @@ export function TestGeneratorPanel({
   const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
   const [topic, setTopic] = useState('');
   const [difficulty, setDifficulty] = useState<DifficultyTier>('Standard');
-  const [questionCount, setQuestionCount] = useState<number>(10);
-  const [shortQuestionCount, setShortQuestionCount] = useState<number>(0);
-  const [longQuestionCount, setLongQuestionCount] = useState<number>(0);
-  const [includeShortOr, setIncludeShortOr] = useState(false);
-  const [includeLongOr, setIncludeLongOr] = useState(false);
-  const [shortChoiceNote, setShortChoiceNote] = useState('');
-  const [longChoiceNote, setLongChoiceNote] = useState('');
-  const [marksPerQuestion, setMarksPerQuestion] = useState<number>(1);
-  const [marksPerShort, setMarksPerShort] = useState<number>(3);
-  const [marksPerLong, setMarksPerLong] = useState<number>(8);
-  const [durationMinutes, setDurationMinutes] = useState<number>(
-    systemSettings.defaultTimeLimitMinutes || 15,
+  const [questionCount, setQuestionCount] = useState<number>(initialPattern.mcqCount);
+  const [shortQuestionCount, setShortQuestionCount] = useState<number>(initialPattern.shortCount);
+  const [longQuestionCount, setLongQuestionCount] = useState<number>(initialPattern.longCount);
+  const [includeShortOr, setIncludeShortOr] = useState(initialPattern.shortHasOr);
+  const [includeLongOr, setIncludeLongOr] = useState(initialPattern.longHasOr);
+  const [shortChoiceNote, setShortChoiceNote] = useState(initialPattern.shortChoiceNote);
+  const [longChoiceNote, setLongChoiceNote] = useState(initialPattern.longChoiceNote);
+  const [marksPerQuestion, setMarksPerQuestion] = useState<number>(initialPattern.mcqMarks);
+  const [marksPerShort, setMarksPerShort] = useState<number>(initialPattern.shortMarks);
+  const [marksPerLong, setMarksPerLong] = useState<number>(initialPattern.longMarks);
+  const [durationMinutes, setDurationMinutes] = useState<number>(initialPattern.totalTimeMinutes);
+  const [sectionATimeMinutes, setSectionATimeMinutes] = useState<number>(
+    initialPattern.sectionATimeMinutes,
   );
+  const [patternLabel, setPatternLabel] = useState<string>(initialPattern.titleTag);
   const [title, setTitle] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<TestDeliveryOverride>('inherit');
   const [scheduledReleaseAt, setScheduledReleaseAt] = useState('');
+  const [scheduledEndAt, setScheduledEndAt] = useState('');
+  const [allowedGrades, setAllowedGrades] = useState<GradeLevel[]>([initialGrade]);
+  const [publishToStudents, setPublishToStudents] = useState(true);
   const [questions, setQuestions] = useState<MCQQuestion[]>([]);
   const [shortQuestions, setShortQuestions] = useState<SubjectiveQuestion[]>([]);
   const [longQuestions, setLongQuestions] = useState<SubjectiveQuestion[]>([]);
@@ -81,6 +94,31 @@ export function TestGeneratorPanel({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const activeOfficialPattern = getOfficialPattern(board, grade, subject, patternMode);
+
+  function applyPatternToForm(
+    targetBoard: ExamBoard,
+    targetGrade: GradeLevel,
+    targetSubject: SubjectName,
+    targetMode: FbisePatternMode,
+  ) {
+    const p = getOfficialPattern(targetBoard, targetGrade, targetSubject, targetMode);
+    setQuestionCount(p.mcqCount);
+    setMarksPerQuestion(p.mcqMarks);
+    setShortQuestionCount(p.shortCount);
+    setMarksPerShort(p.shortMarks);
+    setIncludeShortOr(p.shortHasOr);
+    setShortChoiceNote(p.shortChoiceNote);
+    setLongQuestionCount(p.longCount);
+    setMarksPerLong(p.longMarks);
+    setIncludeLongOr(p.longHasOr);
+    setLongChoiceNote(p.longChoiceNote);
+    setDurationMinutes(p.totalTimeMinutes);
+    setSectionATimeMinutes(p.sectionATimeMinutes);
+    setPatternLabel(p.titleTag);
+    setErrorMsg(null);
+  }
 
   const chaptersForSelection = getSyllabusChapters(board, grade, subject);
   const activeBoardMeta = EXAM_BOARDS.find((b) => b.value === board) ?? EXAM_BOARDS[0];
@@ -274,6 +312,27 @@ export function TestGeneratorPanel({
       scheduledIso = parsedStart.toISOString();
     }
 
+    let scheduledEndIso = '';
+    if (scheduledEndAt.trim()) {
+      const parsedEnd = new Date(scheduledEndAt);
+      if (Number.isNaN(parsedEnd.getTime())) {
+        setErrorMsg('Please select a valid Closing / End Date & Time or clear it.');
+        return;
+      }
+      if (scheduledIso && parsedEnd.getTime() <= new Date(scheduledIso).getTime()) {
+        setErrorMsg('Closing / End Date & Time must be later than the Start Date & Time.');
+        return;
+      }
+      if (publishToStudents && parsedEnd.getTime() <= Date.now()) {
+        setErrorMsg('Closing / End Date & Time cannot already be in the past when publishing to students.');
+        return;
+      }
+      scheduledEndIso = parsedEnd.toISOString();
+    }
+
+    const effectiveAllowedGrades: GradeLevel[] =
+      allowedGrades.length > 0 ? allowedGrades : [grade];
+
     setPublishing(true);
     try {
       await publishMCQTest({
@@ -293,9 +352,13 @@ export function TestGeneratorPanel({
         longQuestions,
         shortChoiceNote: shortChoiceNote.trim(),
         longChoiceNote: longChoiceNote.trim(),
+        sectionATimeMinutes,
+        patternLabel,
         deliveryMode: creatorRole === 'admin' ? deliveryMode : 'inherit',
-        isActive: true,
+        isActive: publishToStudents,
         scheduledReleaseAt: scheduledIso,
+        scheduledEndAt: scheduledEndIso,
+        allowedGrades: effectiveAllowedGrades,
         createdBy: creatorUid,
         createdByName: creatorName,
         createdByRole: creatorRole,
@@ -305,11 +368,14 @@ export function TestGeneratorPanel({
       if (shortQuestions.length > 0) summaryParts.push(`${shortQuestions.length} Short`);
       if (longQuestions.length > 0) summaryParts.push(`${longQuestions.length} Long`);
       const summaryLabel = summaryParts.join(' + ');
+      const classLabel = effectiveAllowedGrades.join(', ');
 
       setSuccessMsg(
-        scheduledIso
-          ? `Published "${title.trim() || `${grade} ${subject}`}" (${summaryLabel}) — Scheduled to start ${new Date(scheduledIso).toLocaleString()}.`
-          : `Published "${title.trim() || `${grade} ${subject}`}" (${summaryLabel}) — Active immediately.`,
+        !publishToStudents
+          ? `Saved "${title.trim() || `${grade} ${subject}`}" (${summaryLabel}) as Paused / Print-Only (hidden from students).`
+          : scheduledIso
+            ? `Published "${title.trim() || `${grade} ${subject}`}" (${summaryLabel}) for ${classLabel} — Starts ${new Date(scheduledIso).toLocaleString()}${scheduledEndIso ? `, closes ${new Date(scheduledEndIso).toLocaleString()}` : ''}.`
+            : `Published "${title.trim() || `${grade} ${subject}`}" (${summaryLabel}) for ${classLabel}${scheduledEndIso ? ` — Active until ${new Date(scheduledEndIso).toLocaleString()}` : ' — Active immediately'}.`,
       );
       setQuestions([]);
       setShortQuestions([]);
@@ -318,6 +384,7 @@ export function TestGeneratorPanel({
       setSelectedChapters([]);
       setTopic('');
       setScheduledReleaseAt('');
+      setScheduledEndAt('');
       onPublished?.();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to publish test.');
@@ -359,10 +426,10 @@ export function TestGeneratorPanel({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-200">
           <div>
             <h2 className="font-display text-lg font-semibold text-slate-900">
-              Paper & Assessment Builder (MCQs + Short + Long)
+              Paper & Assessment Builder (Official FBISE Pattern Auto-Sync)
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {CURRICULUM_BOARD_LABEL} · Short & Long questions stay at 0 by default — increase them whenever needed.
+              {CURRICULUM_BOARD_LABEL} · Selecting any Class &amp; Subject automatically applies its official Section A, B &amp; C pattern.
             </p>
           </div>
           <div className="text-xs text-slate-600 tabular-nums">
@@ -385,6 +452,7 @@ export function TestGeneratorPanel({
                     setBoard(b.value);
                     setSelectedChapters([]);
                     setTopic('');
+                    applyPatternToForm(b.value, grade, subject, patternMode);
                   }}
                   className={`text-left px-4 py-3 rounded-lg border transition-colors cursor-pointer flex items-center justify-between gap-3 ${
                     isSelected
@@ -409,138 +477,39 @@ export function TestGeneratorPanel({
           </div>
         </div>
 
-        {/* Official Federal Board (FBISE) Model Paper Patterns */}
-        <div className="mb-5 p-3.5 rounded-lg bg-slate-50 border border-slate-200">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+        {/* Official Federal Board (FBISE) Pattern Selector + Auto-Synced Breakdown */}
+        <div className="mb-5 p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="text-xs font-bold text-slate-900">
-                Official Federal Board (FBISE) Model Paper Patterns
+                Official Board Pattern Track (Auto-Applied on Class / Subject Change)
               </span>
               <span className="ml-2 text-[11px] text-slate-500">
-                (1-Click Apply · Section-A MCQs + Section-B SRQs + Section-C ERQs)
+                Verified from fbise.edu.pk (SSC-I/II &amp; HSSC-I/II)
               </span>
             </div>
-            <span className="text-[11px] font-semibold text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
-              fbise.edu.pk Pattern
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => applyPatternToForm(board, grade, subject, patternMode)}
+                className="text-[11px] font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1 rounded cursor-pointer transition-colors"
+              >
+                Reset to {grade} {subject} Official ({activeOfficialPattern.totalMarks} Marks)
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
-            {[
-              {
-                id: 'ssc_sci_65',
-                label: 'SSC Science (65 Marks)',
-                sub: '12 MCQ · 11 Short · 2 Long',
-                mcq: 12,
-                mcqMarks: 1,
-                shortCount: 11,
-                shortMarks: 3,
-                longCount: 2,
-                longMarks: 10,
-                duration: 180,
-                shortOr: true,
-                longOr: true,
-                shortNote: 'Attempt all 11 Short Response Questions (internal OR choice provided).',
-                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
-                examType: 'FBISE Model Paper (SSC)',
-              },
-              {
-                id: 'hssc_sci_85',
-                label: 'HSSC Science (85 Marks)',
-                sub: '17 MCQ · 14 Short · 2 Long',
-                mcq: 17,
-                mcqMarks: 1,
-                shortCount: 14,
-                shortMarks: 3,
-                longCount: 2,
-                longMarks: 13,
-                duration: 180,
-                shortOr: true,
-                longOr: true,
-                shortNote: 'Attempt all 14 Short Response Questions (internal OR choice provided).',
-                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
-                examType: 'FBISE Model Paper (HSSC)',
-              },
-              {
-                id: 'math_75',
-                label: 'Mathematics (75 Marks)',
-                sub: '15 MCQ · 9 Short · 3 Long',
-                mcq: 15,
-                mcqMarks: 1,
-                shortCount: 9,
-                shortMarks: 4,
-                longCount: 3,
-                longMarks: 8,
-                duration: 180,
-                shortOr: true,
-                longOr: true,
-                shortNote: 'Attempt all 9 Short Response Questions (internal OR choice provided).',
-                longNote: 'Attempt all 3 Extended Response Questions (OR choice provided).',
-                examType: 'FBISE Model Paper (Math)',
-              },
-              {
-                id: 'reformed_60',
-                label: 'Reformed 50/50 (60 Marks)',
-                sub: '30 MCQ · 6 Short · 2 Long',
-                mcq: 30,
-                mcqMarks: 1,
-                shortCount: 6,
-                shortMarks: 3,
-                longCount: 2,
-                longMarks: 6,
-                duration: 150,
-                shortOr: true,
-                longOr: true,
-                shortNote: 'Attempt all 6 Short Response Questions (internal OR choice provided).',
-                longNote: 'Attempt both Extended Response Questions (OR choice provided).',
-                examType: 'FBISE Reformed 50/50 Pattern',
-              },
-              {
-                id: 'humanities_100',
-                label: 'Compulsory / Arts (100)',
-                sub: '20 MCQ · 10 Short · 4 Long',
-                mcq: 20,
-                mcqMarks: 1,
-                shortCount: 10,
-                shortMarks: 4,
-                longCount: 4,
-                longMarks: 10,
-                duration: 180,
-                shortOr: true,
-                longOr: true,
-                shortNote: 'Attempt all 10 Short Response Questions (internal OR choice provided).',
-                longNote: 'Attempt all 4 Extended Response Questions (OR choice provided).',
-                examType: 'FBISE Model Paper (100 Marks)',
-              },
-            ].map((preset) => {
-              const isActive =
-                board === 'fbise_nbf' &&
-                questionCount === preset.mcq &&
-                shortQuestionCount === preset.shortCount &&
-                longQuestionCount === preset.longCount &&
-                marksPerShort === preset.shortMarks &&
-                marksPerLong === preset.longMarks;
 
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {FBISE_PATTERN_MODES.map((m) => {
+              const isActive = patternMode === m.value;
+              const previewPattern = getOfficialPattern(board, grade, subject, m.value);
               return (
                 <button
-                  key={preset.id}
+                  key={m.value}
                   type="button"
                   onClick={() => {
-                    setBoard('fbise_nbf');
-                    setQuestionCount(preset.mcq);
-                    setMarksPerQuestion(preset.mcqMarks);
-                    setShortQuestionCount(preset.shortCount);
-                    setMarksPerShort(preset.shortMarks);
-                    setIncludeShortOr(preset.shortOr);
-                    setShortChoiceNote(preset.shortNote);
-                    setLongQuestionCount(preset.longCount);
-                    setMarksPerLong(preset.longMarks);
-                    setIncludeLongOr(preset.longOr);
-                    setLongChoiceNote(preset.longNote);
-                    setDurationMinutes(preset.duration);
-                    if (!examLabel.trim()) {
-                      setExamLabel(preset.examType);
-                    }
-                    setErrorMsg(null);
+                    setPatternMode(m.value);
+                    applyPatternToForm(board, grade, subject, m.value);
                   }}
                   className={`text-left px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
                     isActive
@@ -548,17 +517,55 @@ export function TestGeneratorPanel({
                       : 'bg-white text-slate-800 border-slate-300 hover:bg-blue-50 hover:border-blue-400'
                   }`}
                 >
-                  <div className="text-[11px] font-bold leading-tight">{preset.label}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold leading-tight">{m.shortLabel}</span>
+                    <span
+                      className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded tabular-nums ${
+                        isActive ? 'bg-blue-950/60 text-blue-100' : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {previewPattern.totalMarks} Marks
+                    </span>
+                  </div>
                   <div
-                    className={`text-[10px] mt-0.5 tabular-nums ${
+                    className={`text-[10px] mt-1 tabular-nums ${
                       isActive ? 'text-blue-100' : 'text-slate-500'
                     }`}
                   >
-                    {preset.sub}
+                    Sec-A: {previewPattern.mcqCount}×{previewPattern.mcqMarks} · Sec-B: {previewPattern.shortCount}×{previewPattern.shortMarks} · Sec-C: {previewPattern.longCount}×{previewPattern.longMarks}
                   </div>
                 </button>
               );
             })}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] text-slate-700">
+            <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5">
+              <div className="text-[10px] uppercase font-semibold text-slate-500">Section-A (Q.1)</div>
+              <div className="font-bold text-slate-900 tabular-nums">
+                {activeOfficialPattern.mcqCount} MCQs = {activeOfficialPattern.sectionAMarks} Marks ({activeOfficialPattern.sectionATimeMinutes} Min)
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5">
+              <div className="text-[10px] uppercase font-semibold text-slate-500">Section-B (Q.2)</div>
+              <div className="font-bold text-slate-900 tabular-nums">
+                {activeOfficialPattern.shortCount} × {activeOfficialPattern.shortMarks} = {activeOfficialPattern.sectionBMarks} Marks (with OR)
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5">
+              <div className="text-[10px] uppercase font-semibold text-slate-500">
+                Section-C (Q.3{activeOfficialPattern.longCount > 1 ? `–Q.${2 + activeOfficialPattern.longCount}` : ''})
+              </div>
+              <div className="font-bold text-slate-900 tabular-nums">
+                {activeOfficialPattern.longCount} × {activeOfficialPattern.longMarks} = {activeOfficialPattern.sectionCMarks} Marks (with OR)
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5">
+              <div className="text-[10px] uppercase font-semibold text-slate-500">B &amp; C Subjective Time</div>
+              <div className="font-bold text-slate-900 tabular-nums">
+                {formatDurationHoursMin(activeOfficialPattern.subjectiveTimeMinutes)} ({activeOfficialPattern.sectionBMarks + activeOfficialPattern.sectionCMarks} Marks)
+              </div>
+            </div>
           </div>
         </div>
 
@@ -570,9 +577,12 @@ export function TestGeneratorPanel({
             <select
               value={grade}
               onChange={(e) => {
-                setGrade(e.target.value as GradeLevel);
+                const nextGrade = e.target.value as GradeLevel;
+                setGrade(nextGrade);
+                setAllowedGrades([nextGrade]);
                 setSelectedChapters([]);
                 setTopic('');
+                applyPatternToForm(board, nextGrade, subject, patternMode);
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
@@ -591,9 +601,11 @@ export function TestGeneratorPanel({
             <select
               value={subject}
               onChange={(e) => {
-                setSubject(e.target.value as SubjectName);
+                const nextSubject = e.target.value as SubjectName;
+                setSubject(nextSubject);
                 setSelectedChapters([]);
                 setTopic('');
+                applyPatternToForm(board, grade, nextSubject, patternMode);
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
@@ -881,8 +893,10 @@ export function TestGeneratorPanel({
                   >
                     <option value={5}>5 Marks / Long Q</option>
                     <option value={6}>6 Marks / Long Q</option>
+                    <option value={7}>7 Marks / Long Q</option>
                     <option value={8}>8 Marks / Long Q</option>
                     <option value={10}>10 Marks / Long Q</option>
+                    <option value={11}>11 Marks / Long Q</option>
                     <option value={12}>12 Marks / Long Q</option>
                     <option value={13}>13 Marks / Long Q</option>
                     <option value={15}>15 Marks / Long Q</option>
@@ -1032,54 +1046,174 @@ export function TestGeneratorPanel({
           </div>
         </div>
 
-        {/* Test Start Time & Admin Delivery Override */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5 pt-4 border-t border-slate-100">
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Test Start Date & Time (Countdown for Students)
+        {/* Student Class Permission, Scheduled Window & Admin Delivery Override */}
+        <div className="space-y-4 mb-5 pt-4 border-t border-slate-100">
+          <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-900 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={publishToStudents}
+                  onChange={(e) => setPublishToStudents(e.target.checked)}
+                  className="w-4 h-4 accent-blue-700"
+                />
+                Allow Students in Permitted Class(es) to See &amp; Attempt This Paper Online
               </label>
-              {scheduledReleaseAt && (
-                <button
-                  type="button"
-                  onClick={() => setScheduledReleaseAt('')}
-                  className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
-                >
-                  Clear (Start Now)
-                </button>
-              )}
+              <span className="text-[11px] font-medium text-slate-500">
+                {publishToStudents
+                  ? 'Visible only to selected classes during the scheduled window'
+                  : 'Paused / Print-Only (completely hidden from student login)'}
+              </span>
             </div>
-            <input
-              type="datetime-local"
-              value={scheduledReleaseAt}
-              onChange={(e) => setScheduledReleaseAt(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              {scheduledReleaseAt
-                ? `Students will see a live countdown timer until ${new Date(scheduledReleaseAt).toLocaleString()}.`
-                : 'Leave blank to let verified students begin immediately after publishing.'}
-            </p>
+
+            {publishToStudents && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-[11px] font-semibold text-slate-700 mr-1">
+                  Permitted Classes:
+                </span>
+                {GRADES.map((g) => {
+                  const checked = allowedGrades.includes(g);
+                  return (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => {
+                        setAllowedGrades((prev) => {
+                          if (prev.includes(g)) {
+                            return prev.length > 1 ? prev.filter((item) => item !== g) : prev;
+                          }
+                          return [...prev, g];
+                        });
+                      }}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md border cursor-pointer transition-colors inline-flex items-center gap-1 ${
+                        checked
+                          ? 'bg-blue-700 border-blue-700 text-white'
+                          : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {checked && <Check className="w-3 h-3" />}
+                      {GRADE_LABELS[g]}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {creatorRole === 'admin' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Result Release Mode (Admin Control)
-              </label>
-              <select
-                value={deliveryMode}
-                onChange={(e) => setDeliveryMode(e.target.value as TestDeliveryOverride)}
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Paper Start Date &amp; Time
+                </label>
+                {scheduledReleaseAt && (
+                  <button
+                    type="button"
+                    onClick={() => setScheduledReleaseAt('')}
+                    className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
+                  >
+                    Start Now
+                  </button>
+                )}
+              </div>
+              <input
+                type="datetime-local"
+                value={scheduledReleaseAt}
+                onChange={(e) => setScheduledReleaseAt(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
-              >
-                <option value="inherit">
-                  Follow Global Admin Setting ({systemSettings.resultMode === 'instant' ? 'Option 1: Instant' : 'Option 2: Admin Review'})
-                </option>
-                <option value="instant">Option 1: Force Instant Result</option>
-                <option value="admin_review">Option 2: Force Admin Controlled Release</option>
-              </select>
+              />
+              <p className="text-[11px] text-slate-500 mt-1">
+                {scheduledReleaseAt
+                  ? `Unlocks at ${new Date(scheduledReleaseAt).toLocaleString()}.`
+                  : 'Leave blank to unlock immediately upon publishing.'}
+              </p>
             </div>
-          )}
+
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Paper End / Closing Time (Auto-Hide)
+                </label>
+                {scheduledEndAt && (
+                  <button
+                    type="button"
+                    onClick={() => setScheduledEndAt('')}
+                    className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <input
+                type="datetime-local"
+                value={scheduledEndAt}
+                onChange={(e) => setScheduledEndAt(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {[
+                  { label: `+${durationMinutes}m`, mins: durationMinutes },
+                  { label: '+1 Hr', mins: 60 },
+                  { label: '+3 Hrs', mins: 180 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      const base = scheduledReleaseAt ? new Date(scheduledReleaseAt) : new Date();
+                      const baseMs = Number.isNaN(base.getTime()) ? Date.now() : base.getTime();
+                      const end = new Date(baseMs + preset.mins * 60_000);
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      setScheduledEndAt(
+                        `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}T${pad(end.getHours())}:${pad(end.getMinutes())}`,
+                      );
+                    }}
+                    className="px-2 py-0.5 text-[10.5px] font-semibold bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-800 border border-slate-200 rounded cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const base = scheduledReleaseAt ? new Date(scheduledReleaseAt) : new Date();
+                    const d = Number.isNaN(base.getTime()) ? new Date() : base;
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    setScheduledEndAt(
+                      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T23:59`,
+                    );
+                  }}
+                  className="px-2 py-0.5 text-[10.5px] font-semibold bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-800 border border-slate-200 rounded cursor-pointer"
+                >
+                  Today 11:59 PM
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {scheduledEndAt
+                  ? `Auto-hides from students after ${new Date(scheduledEndAt).toLocaleString()}.`
+                  : 'Optional: set a closing time so expired papers vanish automatically.'}
+              </p>
+            </div>
+
+            {creatorRole === 'admin' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Result Release Mode (Admin Control)
+                </label>
+                <select
+                  value={deliveryMode}
+                  onChange={(e) => setDeliveryMode(e.target.value as TestDeliveryOverride)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                >
+                  <option value="inherit">
+                    Follow Global Admin Setting ({systemSettings.resultMode === 'instant' ? 'Option 1: Instant' : 'Option 2: Admin Review'})
+                  </option>
+                  <option value="instant">Option 1: Force Instant Result</option>
+                  <option value="admin_review">Option 2: Force Admin Controlled Release</option>
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {errorMsg && (
@@ -1521,6 +1655,8 @@ export function TestGeneratorPanel({
           subject={subject}
           topic={topic.trim()}
           durationMinutes={durationMinutes}
+          sectionATimeMinutes={sectionATimeMinutes}
+          patternLabel={patternLabel}
           marksPerQuestion={marksPerQuestion}
           questions={questions}
           shortQuestions={shortQuestions}

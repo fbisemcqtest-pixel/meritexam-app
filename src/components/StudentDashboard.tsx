@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   BookOpen,
+  CalendarClock,
   CheckCircle2,
   Clock,
   FileText,
   Lock,
   LogOut,
   Play,
-  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   collection,
@@ -18,20 +20,10 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase';
 import {
-  generateMCQsFromServer,
-  publishMCQTest,
-} from '../services/mcqService';
-import {
-  CURRICULUM_BOARD_LABEL,
-  EXAM_BOARDS,
-  ExamBoard,
-  GRADES,
-  GradeLevel,
   MCQTest,
   SUBJECT_GROUPS,
   SubjectName,
   TestAttempt,
-  getSyllabusChapters,
 } from '../types';
 import { TestRunner } from './TestRunner';
 import { DeveloperFooter } from './DeveloperFooter';
@@ -112,6 +104,12 @@ function getScheduledStartMs(test: MCQTest): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+function getScheduledEndMs(test: MCQTest): number | null {
+  if (!test.scheduledEndAt) return null;
+  const ms = new Date(test.scheduledEndAt).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
 function formatCountdownParts(diffMs: number) {
   const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -131,25 +129,11 @@ function formatCountdownParts(diffMs: number) {
 export function StudentDashboard() {
   const { userProfile, systemSettings, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'tests' | 'results'>('tests');
-  const [gradeFilter, setGradeFilter] = useState<GradeLevel | 'All'>(
-    userProfile?.grade && userProfile.grade !== 'All' ? userProfile.grade : 'All',
-  );
   const [subjectFilter, setSubjectFilter] = useState<SubjectName | 'All'>('All');
 
   const [activeTests, setActiveTests] = useState<MCQTest[]>([]);
-  const [practiceTests, setPracticeTests] = useState<MCQTest[]>([]);
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Instant Subject Practice Launcher state
-  const [practiceBoard, setPracticeBoard] = useState<ExamBoard>('fbise_nbf');
-  const [practiceGrade, setPracticeGrade] = useState<GradeLevel>(
-    userProfile?.grade && userProfile.grade !== 'All' ? userProfile.grade : '9th',
-  );
-  const [practiceSubject, setPracticeSubject] = useState<SubjectName>('Physics');
-  const [practiceCount, setPracticeCount] = useState<number>(10);
-  const [launchingPractice, setLaunchingPractice] = useState(false);
-  const [practiceError, setPracticeError] = useState<string | null>(null);
 
   // Active Test Runner state
   const [runningTest, setRunningTest] = useState<MCQTest | null>(null);
@@ -181,20 +165,6 @@ export function StudentDashboard() {
       },
     );
 
-    const practiceQuery = query(
-      collection(db, 'tests'),
-      where('createdBy', '==', userProfile.uid),
-    );
-    const unsubPractice = onSnapshot(
-      practiceQuery,
-      (snap) => {
-        setPracticeTests(snap.docs.map((d) => d.data() as MCQTest));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, `tests?createdBy=${userProfile.uid}`);
-      },
-    );
-
     const attemptsQuery = query(
       collection(db, 'attempts'),
       where('studentId', '==', userProfile.uid),
@@ -217,75 +187,50 @@ export function StudentDashboard() {
 
     return () => {
       unsubTests();
-      unsubPractice();
       unsubAttempts();
     };
   }, [userProfile]);
 
-  const tests = useMemo(() => {
-    const map = new Map<string, MCQTest>();
-    activeTests.forEach((t) => map.set(t.id, t));
-    practiceTests.forEach((t) => map.set(t.id, t));
-    return Array.from(map.values());
-  }, [activeTests, practiceTests]);
+  const studentGrade = userProfile?.grade;
 
-  const activeOfficialTests = useMemo(() => {
+  const permittedTests = useMemo(() => {
     return activeTests
-      .filter((t) => (gradeFilter === 'All' ? true : t.grade === gradeFilter))
+      .filter((t) => t.isActive === true && t.createdByRole !== 'student_practice')
+      .filter((t) => {
+        if (!studentGrade || studentGrade === 'All') return true;
+        const allowed =
+          t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+        return allowed.includes(studentGrade);
+      })
+      .filter((t) => {
+        const endMs = getScheduledEndMs(t);
+        return endMs === null || nowMs <= endMs;
+      })
       .filter((t) => (subjectFilter === 'All' ? true : t.subject === subjectFilter));
-  }, [activeTests, gradeFilter, subjectFilter]);
+  }, [activeTests, studentGrade, subjectFilter, nowMs]);
 
   const upcomingScheduledTests = useMemo(() => {
-    return activeOfficialTests
+    return permittedTests
       .filter((t) => {
         const startMs = getScheduledStartMs(t);
         return startMs !== null && startMs > nowMs;
       })
       .sort((a, b) => (getScheduledStartMs(a) ?? 0) - (getScheduledStartMs(b) ?? 0));
-  }, [activeOfficialTests, nowMs]);
+  }, [permittedTests, nowMs]);
 
-  async function handleStartInstantPractice() {
-    if (!userProfile) return;
-    setPracticeError(null);
-    setLaunchingPractice(true);
-    try {
-      const generated = await generateMCQsFromServer({
-        board: practiceBoard,
-        grade: practiceGrade,
-        subject: practiceSubject,
-        syllabusChapters: getSyllabusChapters(practiceBoard, practiceGrade, practiceSubject),
-        difficulty: 'Standard',
-        questionCount: practiceCount,
-      });
-
-      const createdTest = await publishMCQTest({
-        title: generated.title,
-        board: practiceBoard,
-        grade: practiceGrade,
-        subject: practiceSubject,
-        topic: 'Instant Subject Assessment',
-        difficulty: 'Standard',
-        durationMinutes: systemSettings.defaultTimeLimitMinutes || 15,
-        questions: generated.questions,
-        deliveryMode: 'inherit',
-        isActive: false,
-        scheduledReleaseAt: '',
-        createdBy: userProfile.uid,
-        createdByName: userProfile.fullName,
-        createdByRole: 'student_practice',
-      });
-
-      setRunningTest(createdTest);
-    } catch (err) {
-      setPracticeError(err instanceof Error ? err.message : 'Unable to start instant test.');
-    } finally {
-      setLaunchingPractice(false);
-    }
-  }
+  const attemptsByTestId = useMemo(() => {
+    const map = new Map<string, TestAttempt>();
+    attempts.forEach((a) => {
+      if (!map.has(a.testId)) {
+        map.set(a.testId, a);
+      }
+    });
+    return map;
+  }, [attempts]);
 
   function handleOpenAttemptReview(attempt: TestAttempt) {
-    if (!attempt.resultReleased) return;
-    const matchedTest = tests.find((t) => t.id === attempt.testId);
+    if (!attempt.resultReleased || attempt.autoCancelled) return;
+    const matchedTest = activeTests.find((t) => t.id === attempt.testId);
     if (!matchedTest) return;
     setReviewingAttempt(attempt);
     setRunningTest(matchedTest);
@@ -507,142 +452,22 @@ export function StudentDashboard() {
               );
             })()}
 
-            {/* Instant Subject MCQ Launcher (when allowed by Admin) */}
-            {systemSettings.allowStudentInstantPractice && (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                <div className="h-1 w-full bg-gradient-to-r from-blue-600 via-teal-500 to-amber-500" />
-                <div className="p-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                    <div>
-                      <h2 className="font-display text-lg font-bold text-slate-900">
-                        Instant Subject MCQ Test
-                      </h2>
-                      <p className="text-xs text-slate-500">
-                        {CURRICULUM_BOARD_LABEL} · Choose your class and subject to launch a fresh examination immediately.
-                      </p>
-                    </div>
-                  </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Board
-                    </label>
-                    <select
-                      value={practiceBoard}
-                      onChange={(e) => setPracticeBoard(e.target.value as ExamBoard)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg"
-                    >
-                      {EXAM_BOARDS.map((b) => (
-                        <option key={b.value} value={b.value}>
-                          {b.value === 'fbise_nbf' ? 'Federal (NBF)' : 'Punjab (PTB)'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Class
-                    </label>
-                    <select
-                      value={practiceGrade}
-                      onChange={(e) => setPracticeGrade(e.target.value as GradeLevel)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg"
-                    >
-                      {GRADES.map((g) => (
-                        <option key={g} value={g}>
-                          {g}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Subject
-                    </label>
-                    <select
-                      value={practiceSubject}
-                      onChange={(e) => setPracticeSubject(e.target.value as SubjectName)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg"
-                    >
-                      {SUBJECT_GROUPS.map((group) => (
-                        <optgroup key={group.label} label={group.label}>
-                          {group.subjects.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Questions
-                    </label>
-                    <select
-                      value={practiceCount}
-                      onChange={(e) => setPracticeCount(Number(e.target.value))}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg tabular-nums"
-                    >
-                      {[5, 10, 15, 20].map((n) => (
-                        <option key={n} value={n}>
-                          {n} MCQs
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={launchingPractice}
-                    onClick={() => void handleStartInstantPractice()}
-                    className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg inline-flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer h-[38px]"
-                  >
-                    {launchingPractice ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        Preparing MCQs...
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-4 h-4" />
-                        Start Subject Test
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {practiceError && (
-                  <p className="mt-3 text-sm text-red-700">{practiceError}</p>
-                )}
-                </div>
-              </div>
-            )}
-
-            {/* Published Tests Filter & Grid */}
+            {/* Permitted Tests Filter & Grid */}
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <h2 className="font-display text-lg font-semibold text-slate-900">
-                  Published Class Assessments
-                </h2>
+                <div>
+                  <h2 className="font-display text-lg font-semibold text-slate-900">
+                    Permitted Class Examinations
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Showing active examinations permitted by your teacher or administrator for Class {userProfile.grade}. Expired papers are hidden automatically.
+                  </p>
+                </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={gradeFilter}
-                    onChange={(e) => setGradeFilter(e.target.value as GradeLevel | 'All')}
-                    className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg"
-                  >
-                    <option value="All">All Classes</option>
-                    {GRADES.map((g) => (
-                      <option key={g} value={g}>
-                        {g}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="px-3 py-1.5 text-xs font-semibold text-blue-800 bg-blue-50 border border-blue-200 rounded-lg">
+                    Class: {userProfile.grade}
+                  </span>
 
                   <select
                     value={subjectFilter}
@@ -666,32 +491,35 @@ export function StudentDashboard() {
 
               {loading ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
-                  Loading published assessments...
+                  Loading permitted assessments...
                 </div>
-              ) : activeOfficialTests.length === 0 ? (
+              ) : permittedTests.length === 0 ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
                   <BookOpen className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-medium text-slate-800">
-                    No published faculty tests match this filter yet
+                    No active examinations are currently open for Class {userProfile.grade}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    {systemSettings.allowStudentInstantPractice
-                      ? 'Use the Instant Subject MCQ Test launcher above or switch class/subject filters.'
-                      : 'Wait for your teacher or administrator to publish an assessment.'}
+                    Only papers permitted by your teacher or administrator within their active time window appear here.
                   </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {activeOfficialTests.map((test) => {
+                  {permittedTests.map((test) => {
                     const effectiveMode =
                       test.deliveryMode === 'inherit'
                         ? systemSettings.resultMode
                         : test.deliveryMode;
                     const startMs = getScheduledStartMs(test);
+                    const endMs = getScheduledEndMs(test);
                     const isScheduledLocked = startMs !== null && startMs > nowMs;
                     const countdown = isScheduledLocked
                       ? formatCountdownParts(startMs - nowMs)
                       : null;
+                    const closingCountdown =
+                      !isScheduledLocked && endMs !== null && endMs > nowMs
+                        ? formatCountdownParts(endMs - nowMs)
+                        : null;
 
                     const subjectAccent = getSubjectAccent(test.subject);
 
@@ -701,6 +529,54 @@ export function StudentDashboard() {
                         className={`bg-white border ${subjectAccent.border} rounded-xl overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between`}
                       >
                         <div className={`h-1.5 w-full bg-gradient-to-r ${subjectAccent.bar}`} />
+
+                        {/* Prominent Paper Time Window Bar at Top of Card */}
+                        <div
+                          className={`px-4 py-2.5 border-b text-[11px] space-y-1 ${
+                            isScheduledLocked
+                              ? 'bg-amber-50/90 border-amber-200 text-amber-950'
+                              : endMs !== null
+                                ? 'bg-blue-50/80 border-blue-200 text-slate-800'
+                                : 'bg-slate-50 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 font-semibold">
+                            <span className="inline-flex items-center gap-1.5">
+                              <CalendarClock className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                              Paper Time ({test.durationMinutes} min)
+                            </span>
+                            {isScheduledLocked && countdown ? (
+                              <span className="text-amber-800 tabular-nums">
+                                Starts in {countdown.days > 0 ? `${countdown.days}d ` : ''}
+                                {countdown.hours}:{countdown.minutes}:{countdown.seconds}
+                              </span>
+                            ) : closingCountdown ? (
+                              <span className="text-red-700 tabular-nums">
+                                Closes in {closingCountdown.days > 0 ? `${closingCountdown.days}d ` : ''}
+                                {closingCountdown.hours}:{closingCountdown.minutes}:{closingCountdown.seconds}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700">Open Now</span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] text-slate-600 tabular-nums">
+                            <span>
+                              Start:{' '}
+                              <strong className="text-slate-900">
+                                {startMs !== null ? new Date(startMs).toLocaleString() : 'Open Now'}
+                              </strong>
+                            </span>
+                            {endMs !== null && (
+                              <span>
+                                Ends:{' '}
+                                <strong className="text-slate-900">
+                                  {new Date(endMs).toLocaleString()}
+                                </strong>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
                         <div className="p-5 flex-1 flex flex-col justify-between">
                           <div>
                             <div className={`text-xs font-bold uppercase tracking-wide mb-1.5 ${subjectAccent.label}`}>
@@ -739,32 +615,73 @@ export function StudentDashboard() {
                           </div>
 
                           <div className="mt-5">
-                            {isScheduledLocked && countdown && startMs !== null ? (
-                              <div className="w-full py-2.5 px-3 bg-amber-50 border border-amber-200 rounded-lg text-center space-y-1">
-                                <div className="text-xs font-semibold text-amber-900 inline-flex items-center gap-1.5 justify-center">
-                                  <Lock className="w-3.5 h-3.5" />
-                                  <span className="tabular-nums">
-                                    Starts in {countdown.days > 0 ? `${countdown.days}d ` : ''}
-                                    {countdown.hours}h : {countdown.minutes}m : {countdown.seconds}s
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-amber-700">
-                                  {new Date(startMs).toLocaleString()}
-                                </div>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setReviewingAttempt(null);
-                                  setRunningTest(test);
-                                }}
-                                className={`w-full py-2 px-4 text-sm font-semibold text-white ${subjectAccent.button} rounded-lg transition-all inline-flex items-center justify-center gap-2 cursor-pointer`}
-                              >
-                                <Play className="w-4 h-4" />
-                                Begin Test
-                              </button>
-                            )}
+                            {(() => {
+                              const prevAttempt = attemptsByTestId.get(test.id);
+                              if (prevAttempt) {
+                                if (prevAttempt.autoCancelled) {
+                                  return (
+                                    <div className="w-full py-2.5 px-3 bg-red-50 border border-red-200 rounded-lg text-center space-y-1">
+                                      <div className="text-xs font-bold text-red-800 inline-flex items-center gap-1.5 justify-center">
+                                        <ShieldAlert className="w-3.5 h-3.5" />
+                                        <span>Paper Cancelled &amp; Auto-Submitted</span>
+                                      </div>
+                                      <div className="text-[11px] text-red-700">
+                                        Screen Lock was broken · Retake blocked
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="w-full py-2.5 px-3 bg-emerald-50 border border-emerald-200 rounded-lg text-center space-y-1">
+                                    <div className="text-xs font-semibold text-emerald-800 inline-flex items-center gap-1.5 justify-center">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>Paper Already Submitted</span>
+                                    </div>
+                                    {prevAttempt.resultReleased && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenAttemptReview(prevAttempt)}
+                                        className="text-[11px] font-semibold text-blue-700 hover:underline cursor-pointer"
+                                      >
+                                        View Answer Key
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              if (isScheduledLocked && countdown && startMs !== null) {
+                                return (
+                                  <div className="w-full py-2.5 px-3 bg-amber-50 border border-amber-200 rounded-lg text-center space-y-1">
+                                    <div className="text-xs font-semibold text-amber-900 inline-flex items-center gap-1.5 justify-center">
+                                      <Lock className="w-3.5 h-3.5" />
+                                      <span className="tabular-nums">
+                                        Starts in {countdown.days > 0 ? `${countdown.days}d ` : ''}
+                                        {countdown.hours}h : {countdown.minutes}m : {countdown.seconds}s
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] text-amber-700">
+                                      Unlocks at {new Date(startMs).toLocaleString()}
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReviewingAttempt(null);
+                                    setRunningTest(test);
+                                  }}
+                                  className={`w-full py-2 px-4 text-sm font-semibold text-white ${subjectAccent.button} rounded-lg transition-all inline-flex items-center justify-center gap-2 cursor-pointer`}
+                                >
+                                  <ShieldCheck className="w-4 h-4" />
+                                  <Play className="w-3.5 h-3.5" />
+                                  Begin Test (Screen Lock)
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
@@ -816,6 +733,12 @@ export function StudentDashboard() {
                             : 'Held Until Release'}
                         </td>
                         <td className="py-3 px-4">
+                          {attempt.autoCancelled && (
+                            <div className="text-xs font-semibold text-red-700 inline-flex items-center gap-1 mr-2">
+                              <ShieldAlert className="w-3.5 h-3.5" />
+                              Auto-Cancelled (Left Screen)
+                            </div>
+                          )}
                           {attempt.resultReleased ? (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
                               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -829,7 +752,11 @@ export function StudentDashboard() {
                           )}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {attempt.resultReleased ? (
+                          {attempt.autoCancelled ? (
+                            <span className="text-xs text-red-600 inline-flex items-center gap-1">
+                              <Lock className="w-3 h-3" /> Cancelled
+                            </span>
+                          ) : attempt.resultReleased ? (
                             <button
                               type="button"
                               onClick={() => handleOpenAttemptReview(attempt)}

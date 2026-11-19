@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  CalendarClock,
   Check,
   CheckCircle2,
   Clock,
@@ -53,6 +54,7 @@ import {
 import { TestGeneratorPanel } from './TestGeneratorPanel';
 import { TestRunner } from './TestRunner';
 import { PrintablePaperModal } from './PrintablePaperModal';
+import { ScheduleAccessModal } from './ScheduleAccessModal';
 import { DeveloperFooter } from './DeveloperFooter';
 
 export function AdminDashboard() {
@@ -69,9 +71,6 @@ export function AdminDashboard() {
   // Examination Mode form state
   const [resultMode, setResultMode] = useState<ResultMode>(systemSettings.resultMode);
   const [testAccessMode, setTestAccessMode] = useState<TestAccessMode>(systemSettings.testAccessMode);
-  const [allowStudentInstantPractice, setAllowStudentInstantPractice] = useState<boolean>(
-    systemSettings.allowStudentInstantPractice,
-  );
   const [allowTeacherPaperCreation, setAllowTeacherPaperCreation] = useState<boolean>(
     systemSettings.allowTeacherPaperCreation !== false,
   );
@@ -87,13 +86,13 @@ export function AdminDashboard() {
 
   const [previewTest, setPreviewTest] = useState<MCQTest | null>(null);
   const [printingTest, setPrintingTest] = useState<MCQTest | null>(null);
+  const [schedulingTest, setSchedulingTest] = useState<MCQTest | null>(null);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
 
   useEffect(() => {
     setResultMode(systemSettings.resultMode);
     setTestAccessMode(systemSettings.testAccessMode);
-    setAllowStudentInstantPractice(systemSettings.allowStudentInstantPractice);
     setAllowTeacherPaperCreation(systemSettings.allowTeacherPaperCreation !== false);
     setDefaultTimeLimitMinutes(systemSettings.defaultTimeLimitMinutes);
     setPassingPercentage(systemSettings.passingPercentage);
@@ -165,7 +164,7 @@ export function AdminDashboard() {
         {
           resultMode,
           testAccessMode,
-          allowStudentInstantPractice,
+          allowStudentInstantPractice: false,
           allowTeacherPaperCreation,
           defaultTimeLimitMinutes,
           passingPercentage,
@@ -868,24 +867,7 @@ export function AdminDashboard() {
             </div>
 
             {/* Additional Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-200 items-center">
-              <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={allowStudentInstantPractice}
-                  onChange={(e) => setAllowStudentInstantPractice(e.target.checked)}
-                  className="w-4 h-4 accent-blue-700"
-                />
-                <div>
-                  <div className="text-xs font-semibold text-slate-900">
-                    Allow Instant Subject Practice
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    Students can launch instant MCQs by class & subject
-                  </div>
-                </div>
-              </label>
-
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-200 items-center">
               <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
                 <input
                   type="checkbox"
@@ -990,6 +972,10 @@ export function AdminDashboard() {
                         const mcqCount = t.questions?.length ?? t.questionCount ?? 0;
                         const shortCount = t.shortQuestions?.length ?? t.shortQuestionCount ?? 0;
                         const longCount = t.longQuestions?.length ?? t.longQuestionCount ?? 0;
+                        const permittedClasses =
+                          t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+                        const endMs = t.scheduledEndAt ? new Date(t.scheduledEndAt).getTime() : NaN;
+                        const isExpired = !Number.isNaN(endMs) && endMs < Date.now();
                         return (
                         <tr key={t.id} className="hover:bg-slate-50">
                           <td className="py-3 px-4 font-medium text-slate-900">
@@ -1001,7 +987,10 @@ export function AdminDashboard() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-slate-600">
-                            {t.grade} · {t.subject}
+                            <div>{t.grade} · {t.subject}</div>
+                            <div className="text-[11px] text-slate-500">
+                              Permitted: {permittedClasses.join(', ')}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-slate-600">
                             {t.createdByName} ({t.createdByRole})
@@ -1024,7 +1013,11 @@ export function AdminDashboard() {
                           </td>
                           <td className="py-3 px-4">
                             {t.isActive ? (
-                              <span className="text-xs font-semibold text-emerald-700">Active</span>
+                              isExpired ? (
+                                <span className="text-xs font-semibold text-red-700">Expired (Hidden)</span>
+                              ) : (
+                                <span className="text-xs font-semibold text-emerald-700">Active</span>
+                              )
                             ) : (
                               <span className="text-xs font-semibold text-slate-500">Inactive</span>
                             )}
@@ -1033,8 +1026,20 @@ export function AdminDashboard() {
                                 Starts: {new Date(t.scheduledReleaseAt).toLocaleString()}
                               </div>
                             )}
+                            {t.scheduledEndAt && (
+                              <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                                Closes: {new Date(t.scheduledEndAt).toLocaleString()}
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right space-x-3 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => setSchedulingTest(t)}
+                              className="text-xs font-semibold text-indigo-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <CalendarClock className="w-3.5 h-3.5" /> Access / Time
+                            </button>
                             <button
                               type="button"
                               onClick={() => setPrintingTest(t)}
@@ -1134,7 +1139,14 @@ export function AdminDashboard() {
                             {a.studentIdentifier || a.studentId.slice(0, 8)}
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-slate-800">{a.testTitle}</td>
+                        <td className="py-3 px-4">
+                          <div className="text-slate-800">{a.testTitle}</div>
+                          {a.autoCancelled && (
+                            <div className="text-[11px] font-semibold text-red-700 mt-0.5">
+                              Auto-Cancelled (Left Screen Lock)
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3 px-4 text-slate-600">
                           {a.grade} · {a.subject}
                         </td>
@@ -1189,6 +1201,8 @@ export function AdminDashboard() {
           subject={printingTest.subject}
           topic={printingTest.topic}
           durationMinutes={printingTest.durationMinutes}
+          sectionATimeMinutes={printingTest.sectionATimeMinutes}
+          patternLabel={printingTest.patternLabel}
           marksPerQuestion={printingTest.marksPerQuestion}
           questions={printingTest.questions}
           shortQuestions={printingTest.shortQuestions}
@@ -1196,6 +1210,13 @@ export function AdminDashboard() {
           shortChoiceNote={printingTest.shortChoiceNote}
           longChoiceNote={printingTest.longChoiceNote}
           onClose={() => setPrintingTest(null)}
+        />
+      )}
+
+      {schedulingTest && (
+        <ScheduleAccessModal
+          test={schedulingTest}
+          onClose={() => setSchedulingTest(null)}
         />
       )}
     </div>

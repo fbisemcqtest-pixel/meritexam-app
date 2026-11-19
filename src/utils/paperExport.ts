@@ -14,6 +14,7 @@ import {
   TableLayoutType,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
   convertInchesToTwip,
 } from 'docx';
@@ -28,6 +29,12 @@ import {
   SubjectName,
   SubjectiveQuestion,
 } from '../types';
+import {
+  estimateSectionATimeMinutes,
+  formatDurationHoursMin,
+  formatRomanPart,
+  getBoardLevelCode,
+} from '../data/fbisePatterns';
 
 export interface WordPaperExportInput {
   title: string;
@@ -39,6 +46,8 @@ export interface WordPaperExportInput {
   subject: SubjectName;
   topic?: string;
   durationMinutes: number;
+  sectionATimeMinutes?: number;
+  patternLabel?: string;
   marksPerQuestion: number;
   totalMarks: number;
   mcqTotalMarks: number;
@@ -86,9 +95,90 @@ interface PdfBlockMetric {
   keepWithNext: boolean;
 }
 
+interface PdfPageRange {
+  start: number;
+  end: number;
+  forced: boolean;
+}
+
+function groupBlocksIntoVisualRows(blocks: PdfBlockMetric[]): PdfBlockMetric[] {
+  const rows: PdfBlockMetric[] = [];
+  for (const blk of blocks) {
+    const prev = rows[rows.length - 1];
+    // Combine side-by-side blocks sharing the same visual row (e.g. 2-column MCQs)
+    if (prev && !blk.forceBreakBefore && !prev.keepWithNext && Math.abs(blk.top - prev.top) < 8) {
+      prev.bottom = Math.max(prev.bottom, blk.bottom);
+    } else {
+      rows.push({ ...blk });
+    }
+  }
+  return rows;
+}
+
+function computePdfPageRanges(
+  rows: PdfBlockMetric[],
+  totalCssHeight: number,
+  maxPageHeightCss: number,
+): PdfPageRange[] {
+  const pageRanges: PdfPageRange[] = [];
+  let pageStart = 0;
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const blk = rows[i];
+
+    if (blk.forceBreakBefore && blk.top > pageStart + 12) {
+      pageRanges.push({ start: pageStart, end: blk.top, forced: true });
+      pageStart = blk.top;
+      continue;
+    }
+
+    if (blk.keepWithNext && i + 1 < rows.length) {
+      let lookIdx = i + 1;
+      while (lookIdx + 1 < rows.length && rows[lookIdx].keepWithNext && !rows[lookIdx + 1].forceBreakBefore) {
+        lookIdx += 1;
+      }
+      const anchorBlk = rows[lookIdx];
+      if (anchorBlk.bottom - pageStart > maxPageHeightCss && blk.top > pageStart + 12) {
+        pageRanges.push({ start: pageStart, end: blk.top, forced: false });
+        pageStart = blk.top;
+        continue;
+      }
+    }
+
+    if (blk.bottom - pageStart > maxPageHeightCss) {
+      if (blk.top > pageStart + 12 && blk.bottom - blk.top <= maxPageHeightCss) {
+        pageRanges.push({ start: pageStart, end: blk.top, forced: false });
+        pageStart = blk.top;
+      } else {
+        while (blk.bottom - pageStart > maxPageHeightCss) {
+          const sliceEnd = pageStart + maxPageHeightCss;
+          pageRanges.push({ start: pageStart, end: sliceEnd, forced: false });
+          pageStart = sliceEnd;
+        }
+      }
+    }
+  }
+
+  while (totalCssHeight - pageStart > maxPageHeightCss + 4) {
+    const sliceEnd = pageStart + maxPageHeightCss;
+    pageRanges.push({ start: pageStart, end: sliceEnd, forced: false });
+    pageStart = sliceEnd;
+  }
+
+  if (totalCssHeight > pageStart + 2) {
+    pageRanges.push({ start: pageStart, end: totalCssHeight, forced: false });
+  }
+
+  if (pageRanges.length === 0) {
+    pageRanges.push({ start: 0, end: totalCssHeight, forced: false });
+  }
+
+  return pageRanges;
+}
+
 /**
- * Renders the printable paper DOM into a crisp, multi-page A4 PDF
- * without slicing questions across page boundaries.
+ * Renders the printable paper DOM into a crisp, multi-page A4 / Legal PDF
+ * without slicing questions across page boundaries or leaving orphan sliver pages.
  */
 export async function exportPaperToPdf(
   sheetElement: HTMLElement,
@@ -109,37 +199,88 @@ export async function exportPaperToPdf(
   cloneHost.style.pointerEvents = 'none';
 
   const clonedSheet = sheetElement.cloneNode(true) as HTMLElement;
+  clonedSheet.setAttribute('data-pdf-root', 'true');
   clonedSheet.style.width = `${targetWidthPx}px`;
+  clonedSheet.style.minWidth = `${targetWidthPx}px`;
   clonedSheet.style.maxWidth = `${targetWidthPx}px`;
   clonedSheet.style.margin = '0';
   clonedSheet.style.border = 'none';
   clonedSheet.style.boxShadow = 'none';
-  clonedSheet.style.padding = compactLayout ? '10px 16px' : '20px 26px';
+  clonedSheet.style.padding = compactLayout ? '4px 10px' : '16px 22px';
   clonedSheet.style.backgroundColor = '#ffffff';
 
   cloneHost.appendChild(clonedSheet);
   document.body.appendChild(cloneHost);
 
   try {
-    // Allow browser layout/fonts to settle on clone
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-    const sheetRect = clonedSheet.getBoundingClientRect();
-    const blockNodes = Array.from(
-      clonedSheet.querySelectorAll<HTMLElement>('[data-pdf-block], [data-pdf-page-break]'),
-    );
+    const pageWidthMm = isLegal ? 215.9 : 210;
+    const pageHeightMm = isLegal ? 355.6 : 297;
+    let marginMm = compactLayout ? 5 : 9;
 
-    const blocks: PdfBlockMetric[] = blockNodes
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          top: Math.max(0, rect.top - sheetRect.top),
-          bottom: Math.max(0, rect.bottom - sheetRect.top),
-          forceBreakBefore: el.hasAttribute('data-pdf-page-break'),
-          keepWithNext: el.hasAttribute('data-pdf-keep-with-next'),
-        };
-      })
-      .filter((b) => b.bottom > b.top);
+    const measureCurrent = () => {
+      const sheetRect = clonedSheet.getBoundingClientRect();
+      const blockNodes = Array.from(
+        clonedSheet.querySelectorAll<HTMLElement>('[data-pdf-block], [data-pdf-page-break]'),
+      );
+      const rawBlocks: PdfBlockMetric[] = blockNodes
+        .map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            top: Math.max(0, rect.top - sheetRect.top),
+            bottom: Math.max(0, rect.bottom - sheetRect.top),
+            forceBreakBefore: el.hasAttribute('data-pdf-page-break'),
+            keepWithNext: el.hasAttribute('data-pdf-keep-with-next'),
+          };
+        })
+        .filter((b) => b.bottom > b.top);
+
+      const contentWidthMm = pageWidthMm - marginMm * 2;
+      const contentHeightMm = pageHeightMm - marginMm * 2;
+      const totalCssWidth = clonedSheet.offsetWidth || targetWidthPx;
+      const totalCssHeight = clonedSheet.offsetHeight || sheetRect.height;
+      const maxPageHeightCss = totalCssWidth * (contentHeightMm / contentWidthMm);
+      const rows = groupBlocksIntoVisualRows(rawBlocks);
+      const ranges = computePdfPageRanges(rows, totalCssHeight, maxPageHeightCss);
+
+      return { contentWidthMm, totalCssWidth, totalCssHeight, maxPageHeightCss, ranges };
+    };
+
+    let measured = measureCurrent();
+
+    // If compact mode leaves just a small trailing sliver (< 28% of a page) that isn't an intentional break,
+    // gently tighten spacing & margins so those few lines pull cleanly onto the previous page.
+    if (compactLayout && measured.ranges.length > 1) {
+      const lastIdx = measured.ranges.length - 1;
+      const lastRange = measured.ranges[lastIdx];
+      const prevRange = measured.ranges[lastIdx - 1];
+      const lastHeight = lastRange.end - lastRange.start;
+      const trailingWasIntentionalBreak = lastRange.forced || (prevRange && lastHeight > measured.maxPageHeightCss * 0.28);
+
+      if (!trailingWasIntentionalBreak && lastHeight < measured.maxPageHeightCss * 0.28) {
+        marginMm = 4;
+        clonedSheet.style.padding = '2px 8px';
+        const tightStyle = document.createElement('style');
+        tightStyle.textContent = `
+          [data-pdf-root="true"] { font-size: 92% !important; line-height: 1.2 !important; }
+          [data-pdf-root="true"] [data-pdf-block="true"] { padding-top: 1.5px !important; padding-bottom: 1.5px !important; }
+        `;
+        cloneHost.appendChild(tightStyle);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        const tighterMeasured = measureCurrent();
+        if (tighterMeasured.ranges.length < measured.ranges.length) {
+          measured = tighterMeasured;
+        } else {
+          cloneHost.removeChild(tightStyle);
+          marginMm = 5;
+          clonedSheet.style.padding = '4px 10px';
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          measured = measureCurrent();
+        }
+      }
+    }
 
     const canvas = await html2canvas(clonedSheet, {
       scale: 2,
@@ -149,69 +290,12 @@ export async function exportPaperToPdf(
       windowWidth: targetWidthPx + 24,
     });
 
-    const pageWidthMm = isLegal ? 215.9 : 210;
-    const pageHeightMm = isLegal ? 355.6 : 297;
-    const marginMm = compactLayout ? 7 : 10;
-    const contentWidthMm = pageWidthMm - marginMm * 2;
-    const contentHeightMm = pageHeightMm - marginMm * 2;
-
-    const totalCssWidth = clonedSheet.offsetWidth || targetWidthPx;
-    const totalCssHeight = clonedSheet.offsetHeight || canvas.height / 2;
+    const totalCssWidth = measured.totalCssWidth;
+    const totalCssHeight = measured.totalCssHeight || canvas.height / 2;
     const scaleX = canvas.width / totalCssWidth;
     const scaleY = canvas.height / totalCssHeight;
-
-    // Max CSS px that fit inside one A4 / Legal printable height
-    const maxPageHeightCss = totalCssWidth * (contentHeightMm / contentWidthMm);
-
-    const pageRanges: Array<{ start: number; end: number }> = [];
-    let pageStart = 0;
-
-    for (let i = 0; i < blocks.length; i += 1) {
-      const blk = blocks[i];
-
-      if (blk.forceBreakBefore && blk.top > pageStart + 12) {
-        pageRanges.push({ start: pageStart, end: blk.top });
-        pageStart = blk.top;
-        continue;
-      }
-
-      if (blk.keepWithNext && i + 1 < blocks.length) {
-        const nextBlk = blocks[i + 1];
-        if (nextBlk.bottom - pageStart > maxPageHeightCss && blk.top > pageStart + 12) {
-          pageRanges.push({ start: pageStart, end: blk.top });
-          pageStart = blk.top;
-          continue;
-        }
-      }
-
-      if (blk.bottom - pageStart > maxPageHeightCss) {
-        if (blk.top > pageStart + 12 && blk.bottom - blk.top <= maxPageHeightCss) {
-          pageRanges.push({ start: pageStart, end: blk.top });
-          pageStart = blk.top;
-        } else {
-          // Single block exceeds page height; advance by page slices
-          while (blk.bottom - pageStart > maxPageHeightCss) {
-            const sliceEnd = pageStart + maxPageHeightCss;
-            pageRanges.push({ start: pageStart, end: sliceEnd });
-            pageStart = sliceEnd;
-          }
-        }
-      }
-    }
-
-    while (totalCssHeight - pageStart > maxPageHeightCss + 4) {
-      const sliceEnd = pageStart + maxPageHeightCss;
-      pageRanges.push({ start: pageStart, end: sliceEnd });
-      pageStart = sliceEnd;
-    }
-
-    if (totalCssHeight > pageStart + 2) {
-      pageRanges.push({ start: pageStart, end: totalCssHeight });
-    }
-
-    if (pageRanges.length === 0) {
-      pageRanges.push({ start: 0, end: totalCssHeight });
-    }
+    const contentWidthMm = measured.contentWidthMm;
+    const pageRanges = measured.ranges;
 
     const pdf = new jsPDF({
       orientation: 'portrait',
@@ -360,6 +444,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     subject,
     topic,
     durationMinutes,
+    sectionATimeMinutes,
+    patternLabel = '',
     marksPerQuestion,
     totalMarks,
     mcqTotalMarks,
@@ -382,10 +468,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
 
   const CIRCLED_DIGITS = ['⓪', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'];
   const CIRCLED_LETTERS = ['Ⓐ', 'Ⓑ', 'Ⓒ', 'Ⓓ'];
-  const optionTag = (optIdx: number) =>
-    paperStyle === 'fbise_official'
-      ? `${CIRCLED_LETTERS[optIdx] ?? `(${String.fromCharCode(65 + optIdx)})`} `
-      : `(${String.fromCharCode(65 + optIdx)}) `;
+  const optionTag = (optIdx: number) => `(${String.fromCharCode(65 + optIdx)}) `;
 
   const qFontSize = compactLayout ? 18 : 20;
   const optFontSize = compactLayout ? 17 : 19;
@@ -393,7 +476,18 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
   const isOfficial = paperStyle === 'fbise_official';
   const mcqQuestionNum = questions.length > 0 ? 1 : 0;
   const shortQuestionNum = shortQuestions.length > 0 ? mcqQuestionNum + 1 : 0;
-  const longQuestionNum = longQuestions.length > 0 ? (shortQuestionNum || mcqQuestionNum) + 1 : 0;
+  const longStartNum = (shortQuestionNum || mcqQuestionNum) + 1;
+  const boardLevelCode = getBoardLevelCode(grade);
+  const resolvedSectionATime = estimateSectionATimeMinutes(
+    grade,
+    questions.length,
+    sectionATimeMinutes,
+  );
+  const subjectiveTotalMarks = Math.round((shortTotalMarks + longTotalMarks) * 100) / 100;
+  const resolvedSubjectiveTime =
+    questions.length > 0 && (shortQuestions.length > 0 || longQuestions.length > 0)
+      ? Math.max(15, durationMinutes - resolvedSectionATime)
+      : durationMinutes;
   const hasShortOr = shortQuestions.some((q) => Boolean(q.orPrompt?.trim()));
   const hasLongOr = longQuestions.some((q) => Boolean(q.orPrompt?.trim()));
 
@@ -426,15 +520,15 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     headerParagraphs.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 30 },
+        spacing: { before: 0, after: 25 },
         children: [
           new TextRun({
             text:
               board === 'punjab_ptb'
-                ? 'PUNJAB BOARD (BISE · PTB / PCTB) — EXAMINATION PAPER'
-                : 'FEDERAL BOARD OF INTERMEDIATE & SECONDARY EDUCATION (FBISE), ISLAMABAD',
+                ? `PUNJAB BOARD (BISE · PTB) ${boardLevelCode} EXAMINATION`
+                : 'FEDERAL BOARD OF INTERMEDIATE AND SECONDARY EDUCATION, ISLAMABAD',
             bold: true,
-            size: 21,
+            size: 20,
             color: '0F172A',
             font: 'Calibri',
           }),
@@ -448,7 +542,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         spacing: { before: 0, after: 20 },
         children: [
           new TextRun({
-            text: `${(examLabel.trim() || 'Model Question Paper').toUpperCase()} · ${(title.trim() || 'Assessment Paper').toUpperCase()}`,
+            text: `${subject.toUpperCase()} ${boardLevelCode} · ${(examLabel.trim() || 'Model Question Paper').toUpperCase()}${patternLabel ? ` (${patternLabel})` : ''}`,
             bold: true,
             size: 19,
             color: '334155',
@@ -457,6 +551,23 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         ],
       }),
     );
+
+    if (title.trim() && title.trim() !== `${grade} ${subject}`) {
+      headerParagraphs.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 0, after: 15 },
+          children: [
+            new TextRun({
+              text: title.trim(),
+              size: 17,
+              color: '475569',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+    }
 
     headerRows.push(
       new TableRow({
@@ -477,7 +588,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
       }),
     );
 
-    // Roll No. + Version No. OMR Bubbles + Invigilator / Candidate Details
+    // Version No. + Roll No. OMR Bubbles + Official Candidate / Invigilator Details
     if (showOmrGrid) {
       const omrDigitParagraphs = (cols: number, label: string, boxText: string): Paragraph[] => [
         new Paragraph({
@@ -539,37 +650,59 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                       cantSplit: true,
                       children: [
                         new TableCell({
-                          width: { size: 34, type: WidthType.PERCENTAGE },
+                          width: { size: 22, type: WidthType.PERCENTAGE },
                           borders: {
                             top: NO_CELL_BORDERS.top,
                             bottom: NO_CELL_BORDERS.bottom,
                             left: NO_CELL_BORDERS.left,
                             right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                           },
-                          margins: { top: 20, bottom: 20, left: 40, right: 40 },
-                          children: omrDigitParagraphs(6, 'ROLL NO.', '[ ] [ ] [ ] [ ] [ ] [ ]'),
-                        }),
-                        new TableCell({
-                          width: { size: 24, type: WidthType.PERCENTAGE },
-                          borders: {
-                            top: NO_CELL_BORDERS.top,
-                            bottom: NO_CELL_BORDERS.bottom,
-                            left: NO_CELL_BORDERS.left,
-                            right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                          },
-                          margins: { top: 20, bottom: 20, left: 40, right: 40 },
+                          margins: { top: 20, bottom: 20, left: 30, right: 30 },
                           children: omrDigitParagraphs(4, 'VERSION NO.', '[ ] [ ] [ ] [ ]'),
                         }),
                         new TableCell({
-                          width: { size: 42, type: WidthType.PERCENTAGE },
+                          width: { size: 32, type: WidthType.PERCENTAGE },
+                          borders: {
+                            top: NO_CELL_BORDERS.top,
+                            bottom: NO_CELL_BORDERS.bottom,
+                            left: NO_CELL_BORDERS.left,
+                            right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                          },
+                          margins: { top: 20, bottom: 20, left: 30, right: 30 },
+                          children: omrDigitParagraphs(6, 'ROLL NO.', '[ ] [ ] [ ] [ ] [ ] [ ]'),
+                        }),
+                        new TableCell({
+                          width: { size: 46, type: WidthType.PERCENTAGE },
                           borders: NO_CELL_BORDERS,
-                          margins: { top: 30, bottom: 20, left: 100, right: 40 },
+                          margins: { top: 25, bottom: 20, left: 90, right: 40 },
                           children: [
                             new Paragraph({
-                              spacing: { before: 15, after: 45 },
+                              spacing: { before: 10, after: 35 },
                               children: [
                                 new TextRun({
-                                  text: "Candidate's Name: _______________________",
+                                  text: 'Answer Sheet No.: _______________________',
+                                  size: 17,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                            new Paragraph({
+                              spacing: { before: 0, after: 35 },
+                              children: [
+                                new TextRun({
+                                  text: 'Name of Candidate: ______________________',
+                                  size: 17,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                              ],
+                            }),
+                            new Paragraph({
+                              spacing: { before: 0, after: 35 },
+                              children: [
+                                new TextRun({
+                                  text: 'Sign. of Candidate: _______________________',
                                   size: 17,
                                   color: '0F172A',
                                   font: 'Calibri',
@@ -580,18 +713,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                               spacing: { before: 0, after: 45 },
                               children: [
                                 new TextRun({
-                                  text: "Candidate's Sign.: _______________________",
-                                  size: 17,
-                                  color: '0F172A',
-                                  font: 'Calibri',
-                                }),
-                              ],
-                            }),
-                            new Paragraph({
-                              spacing: { before: 0, after: 55 },
-                              children: [
-                                new TextRun({
-                                  text: 'Sign. of Dy. Supdt.: _____________________',
+                                  text: `Sign. of Invigilator: ____________   Date: ${formattedDate || '__________'}`,
                                   size: 17,
                                   color: '0F172A',
                                   font: 'Calibri',
@@ -606,10 +728,10 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                                 right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                               },
                               shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
-                              spacing: { before: 20, after: 0 },
+                              spacing: { before: 15, after: 0 },
                               children: [
                                 new TextRun({
-                                  text: ' Use Blue/Black Pen only (Lead pencil prohibited). Fill circle completely: ● (Correct) | ✕ ✓ (Wrong). Do not overwrite.',
+                                  text: ' Use Blue/Black Ballpoint Pen only (Lead pencil prohibited). Fill circle completely: ● (Correct) | ✕ ✓ (Wrong). Do not overwrite.',
                                   size: 15,
                                   color: '334155',
                                   font: 'Calibri',
@@ -640,17 +762,25 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 right: NO_CELL_BORDERS.right,
                 bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
               },
-              margins: { top: 70, bottom: 70, left: 120, right: 80 },
+              margins: { top: 65, bottom: 65, left: 100, right: 60 },
               children: [
+                new Paragraph({
+                  spacing: { before: 0, after: 20 },
+                  children: [
+                    new TextRun({ text: 'Version No.: ', bold: true, size: 17, font: 'Calibri' }),
+                    new TextRun({ text: '[ ][ ][ ][ ]   ', bold: true, size: 17, font: 'Consolas' }),
+                    new TextRun({ text: 'ROLL NO.: ', bold: true, size: 17, font: 'Calibri' }),
+                    new TextRun({ text: '[ ][ ][ ][ ][ ][ ]', bold: true, size: 17, font: 'Consolas' }),
+                  ],
+                }),
                 new Paragraph({
                   spacing: { before: 0, after: 0 },
                   children: [
-                    new TextRun({ text: 'ROLL NO:  ', bold: true, size: 19, font: 'Calibri' }),
                     new TextRun({
-                      text: '[   ] [   ] [   ] [   ] [   ] [   ]',
-                      bold: true,
-                      size: 19,
-                      font: 'Consolas',
+                      text: 'Answer Sheet No.: ___________________',
+                      size: 17,
+                      color: '1E293B',
+                      font: 'Calibri',
                     }),
                   ],
                 }),
@@ -664,15 +794,25 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 right: NO_CELL_BORDERS.right,
                 bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
               },
-              margins: { top: 70, bottom: 70, left: 80, right: 120 },
+              margins: { top: 65, bottom: 65, left: 60, right: 100 },
               children: [
                 new Paragraph({
-                  alignment: AlignmentType.RIGHT,
+                  spacing: { before: 0, after: 20 },
+                  children: [
+                    new TextRun({
+                      text: 'Name of Candidate: ________________________',
+                      size: 17,
+                      color: '1E293B',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+                new Paragraph({
                   spacing: { before: 0, after: 0 },
                   children: [
                     new TextRun({
-                      text: 'Name: ___________________   Sign. Dy. Supdt.: ____________',
-                      size: 18,
+                      text: `Sign. Candidate: ________  Sign. Invigilator: ________  Date: ${formattedDate || '________'}`,
+                      size: 16,
                       color: '1E293B',
                       font: 'Calibri',
                     }),
@@ -687,10 +827,10 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
 
     // Metadata Row
     const metaValues = [
-      `Class: ${GRADE_LABELS[grade]}`,
+      `Examination: ${boardLevelCode} (${GRADE_LABELS[grade]})`,
       `Subject: ${subject}`,
       `Total Marks: ${totalMarks}`,
-      `Time: ${durationMinutes} Min${formattedDate ? ` · ${formattedDate}` : ''}`,
+      `Total Time: ${formatDurationHoursMin(durationMinutes)}${formattedDate ? ` · ${formattedDate}` : ''}`,
     ];
 
     headerRows.push(
@@ -709,7 +849,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                     new TextRun({
                       text: val,
                       bold: true,
-                      size: 19,
+                      size: 18,
                       color: '0F172A',
                       font: 'Calibri',
                     }),
@@ -857,29 +997,61 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     children.push(
       createSectionBanner(
         isOfficial
-          ? `SECTION — A · Question ${mcqQuestionNum} (Objective / MCQs)`
+          ? `SECTION – A (Marks ${mcqTotalMarks})`
           : `Question ${mcqQuestionNum}: Multiple Choice Questions (Objective)`,
-        `Marks: ${mcqTotalMarks} (${questions.length} × ${marksPerQuestion})`,
+        isOfficial
+          ? `Time allowed: ${resolvedSectionATime} minutes`
+          : `Marks: ${mcqTotalMarks} (${questions.length} × ${marksPerQuestion})`,
         isOfficial,
       ),
     );
 
-    children.push(
-      new Paragraph({
-        spacing: { before: 70, after: compactLayout ? 80 : 120 },
-        children: [
-          new TextRun({
-            text: isOfficial
-              ? 'Note: Section-A is compulsory. Answer all parts by selecting the correct option (A, B, C, or D). Deleting or overwriting is not allowed.'
-              : 'Note: Choose the correct option (A, B, C, or D) for each statement below.',
-            bold: true,
-            size: 18,
-            color: '334155',
-            font: 'Calibri',
-          }),
-        ],
-      }),
-    );
+    if (isOfficial) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 60, after: 35 },
+          children: [
+            new TextRun({
+              text: `Note: Section – A is compulsory. All parts of this section are to be answered on the separately provided OMR Answer Sheet / question paper itself. It should be completed in the first ${resolvedSectionATime} minutes and handed over to the Centre Superintendent. Deleting/overwriting is not allowed. Do not use lead pencil.`,
+              size: 16,
+              color: '334155',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+      children.push(
+        new Paragraph({
+          spacing: { before: 0, after: compactLayout ? 70 : 110 },
+          children: [
+            new TextRun({
+              text: `Q.${mcqQuestionNum} Fill the relevant bubble / circle against each question according to curriculum. Each part carries ${
+                marksPerQuestion === 1 ? 'one mark' : `${marksPerQuestion} marks`
+              }.`,
+              bold: true,
+              size: 18,
+              color: '0F172A',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+    } else {
+      children.push(
+        new Paragraph({
+          spacing: { before: 70, after: compactLayout ? 80 : 120 },
+          children: [
+            new TextRun({
+              text: 'Note: Choose the correct option (A, B, C, or D) for each statement below.',
+              bold: true,
+              size: 18,
+              color: '334155',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+    }
 
     if (twoColumnMcqs) {
       const mcqPairRows: TableRow[] = [];
@@ -966,6 +1138,212 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           rows: mcqPairRows,
         }),
       );
+    } else if (isOfficial) {
+      const fbiseMcqRows: TableRow[] = [
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            new TableCell({
+              width: { size: 81, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+              borders: {
+                top: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                bottom: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: 35, bottom: 35, left: 80, right: 60 },
+              children: [
+                new Paragraph({
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: 'QUESTIONS & OPTIONS',
+                      bold: true,
+                      size: 15,
+                      color: '334155',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 19, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+              verticalAlign: VerticalAlign.CENTER,
+              borders: {
+                top: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                bottom: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: 35, bottom: 35, left: 40, right: 40 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: 'BUBBLES (A B C D)',
+                      bold: true,
+                      size: 15,
+                      color: '334155',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ];
+
+      questions.forEach((q, idx) => {
+        const hasLongOpt = q.options.some((opt) => opt.trim().length > 20);
+        const optionParagraphs: Paragraph[] = hasLongOpt
+          ? [0, 2].map(
+              (startIdx) =>
+                new Paragraph({
+                  indent: { left: convertInchesToTwip(0.22) },
+                  tabStops: [{ type: TabStopType.LEFT, position: convertInchesToTwip(2.85) }],
+                  spacing: { before: 0, after: startIdx === 0 ? 10 : 0 },
+                  children: [
+                    new TextRun({
+                      text: `(${String.fromCharCode(65 + startIdx)}) `,
+                      bold: true,
+                      size: optFontSize,
+                      color: '0F172A',
+                      font: 'Calibri',
+                    }),
+                    new TextRun({
+                      text: q.options[startIdx] ?? '',
+                      size: optFontSize,
+                      color: '1E293B',
+                      font: 'Calibri',
+                    }),
+                    ...(q.options[startIdx + 1] !== undefined
+                      ? [
+                          new TextRun({
+                            text: `\t(${String.fromCharCode(65 + startIdx + 1)}) `,
+                            bold: true,
+                            size: optFontSize,
+                            color: '0F172A',
+                            font: 'Calibri',
+                          }),
+                          new TextRun({
+                            text: q.options[startIdx + 1] ?? '',
+                            size: optFontSize,
+                            color: '1E293B',
+                            font: 'Calibri',
+                          }),
+                        ]
+                      : []),
+                  ],
+                }),
+            )
+          : [
+              new Paragraph({
+                indent: { left: convertInchesToTwip(0.22) },
+                spacing: { before: 0, after: 0 },
+                children: q.options.flatMap((opt, optIdx) => [
+                  new TextRun({
+                    text: `${optIdx > 0 ? '    ' : ''}(${String.fromCharCode(65 + optIdx)}) `,
+                    bold: true,
+                    size: optFontSize,
+                    color: '0F172A',
+                    font: 'Calibri',
+                  }),
+                  new TextRun({
+                    text: opt,
+                    size: optFontSize,
+                    color: '1E293B',
+                    font: 'Calibri',
+                  }),
+                ]),
+              }),
+            ];
+
+        fbiseMcqRows.push(
+          new TableRow({
+            cantSplit: true,
+            children: [
+              new TableCell({
+                width: { size: 81, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: NO_CELL_BORDERS.top,
+                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                  left: { style: BorderStyle.SINGLE, size: 6, color: '94A3B8' },
+                  right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                },
+                margins: {
+                  top: compactLayout ? 25 : 50,
+                  bottom: compactLayout ? 25 : 50,
+                  left: 80,
+                  right: 60,
+                },
+                children: [
+                  new Paragraph({
+                    spacing: { before: 0, after: 15 },
+                    children: [
+                      new TextRun({
+                        text: `(${idx + 1}) `,
+                        bold: true,
+                        size: qFontSize,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                      new TextRun({
+                        text: q.prompt,
+                        bold: true,
+                        size: qFontSize,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                    ],
+                  }),
+                  ...optionParagraphs,
+                ],
+              }),
+              new TableCell({
+                width: { size: 19, type: WidthType.PERCENTAGE },
+                verticalAlign: VerticalAlign.CENTER,
+                shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+                borders: {
+                  top: NO_CELL_BORDERS.top,
+                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                  left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                  right: { style: BorderStyle.SINGLE, size: 6, color: '94A3B8' },
+                },
+                margins: { top: 25, bottom: 25, left: 30, right: 30 },
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 0, after: 0 },
+                    children: [
+                      new TextRun({
+                        text: CIRCLED_LETTERS.join(' '),
+                        size: compactLayout ? 18 : 20,
+                        color: '0F172A',
+                        font: 'Segoe UI Symbol',
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        );
+      });
+
+      children.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          layout: TableLayoutType.FIXED,
+          rows: fbiseMcqRows,
+        }),
+      );
     } else {
       questions.forEach((q, idx) => {
         children.push(
@@ -994,7 +1372,6 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         // 2-column options table for clean alignment
         const optionRows: TableRow[] = [];
         for (let r = 0; r < q.options.length; r += 2) {
-          const leftLetter = String.fromCharCode(65 + r);
           const leftText = q.options[r] ?? '';
           const rightLetter = q.options[r + 1] !== undefined ? String.fromCharCode(65 + r + 1) : '';
           const rightText = q.options[r + 1] ?? '';
@@ -1016,7 +1393,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                           bold: true,
                           size: optFontSize,
                           color: '1E293B',
-                          font: paperStyle === 'fbise_official' ? 'Segoe UI Symbol' : 'Calibri',
+                          font: 'Calibri',
                         }),
                         new TextRun({
                           text: leftText,
@@ -1042,7 +1419,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                               bold: true,
                               size: optFontSize,
                               color: '1E293B',
-                              font: paperStyle === 'fbise_official' ? 'Segoe UI Symbol' : 'Calibri',
+                              font: 'Calibri',
                             }),
                             new TextRun({
                               text: rightText,
@@ -1071,22 +1448,82 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     }
   }
 
-  // Optional Separate Page for Subjective Part
-  if (
-    isOfficial &&
-    separateSectionA &&
-    questions.length > 0 &&
-    (shortQuestions.length > 0 || longQuestions.length > 0)
-  ) {
-    children.push(new Paragraph({ children: [new PageBreak()] }));
+  // Subjective Part Header (Sections B & C)
+  if (isOfficial && (shortQuestions.length > 0 || longQuestions.length > 0)) {
+    if (separateSectionA && questions.length > 0) {
+      children.push(new Paragraph({ children: [new PageBreak()] }));
+    } else if (questions.length > 0) {
+      children.push(new Paragraph({ spacing: { before: 80, after: 60 }, children: [] }));
+    }
+
     children.push(
-      createSectionBanner(
-        `${title.trim() || 'Question Paper'} — Subjective Part (Sections B & C)`,
-        `Subjective Marks: ${Math.round((shortTotalMarks + longTotalMarks) * 100) / 100}`,
-        true,
-      ),
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows: [
+          new TableRow({
+            cantSplit: true,
+            children: [
+              new TableCell({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+                borders: {
+                  top: { style: BorderStyle.SINGLE, size: 12, color: '0F172A' },
+                  bottom: { style: BorderStyle.SINGLE, size: 12, color: '0F172A' },
+                  left: { style: BorderStyle.SINGLE, size: 12, color: '0F172A' },
+                  right: { style: BorderStyle.SINGLE, size: 12, color: '0F172A' },
+                },
+                margins: { top: 65, bottom: 65, left: 100, right: 100 },
+                children: [
+                  new Paragraph({
+                    tabStops: [
+                      { type: TabStopType.CENTER, position: TabStopPosition.MAX / 2 },
+                      { type: TabStopType.RIGHT, position: TabStopPosition.MAX },
+                    ],
+                    spacing: { before: 0, after: 35 },
+                    children: [
+                      new TextRun({
+                        text: `Time Allowed: ${formatDurationHoursMin(resolvedSubjectiveTime)}`,
+                        bold: true,
+                        size: 18,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                      new TextRun({
+                        text: `\t${boardLevelCode} ${subject.toUpperCase()} — SUBJECTIVE PART (SECTIONS B & C)`,
+                        bold: true,
+                        size: 18,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                      new TextRun({
+                        text: `\tTotal Marks Section B & C: ${subjectiveTotalMarks}`,
+                        bold: true,
+                        size: 18,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                    ],
+                  }),
+                  new Paragraph({
+                    spacing: { before: 0, after: 0 },
+                    children: [
+                      new TextRun({
+                        text: "Note: Answer all parts from Section 'B' and all questions from Section 'C' on the E-sheet. Write your answers on the allotted / given spaces.",
+                        size: 16,
+                        color: '334155',
+                        font: 'Calibri',
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
     );
-    children.push(new Paragraph({ spacing: { before: 60, after: 60 }, children: [] }));
+    children.push(new Paragraph({ spacing: { before: 50, after: 50 }, children: [] }));
   } else if (questions.length > 0 && (shortQuestions.length > 0 || longQuestions.length > 0)) {
     children.push(new Paragraph({ spacing: { before: 80, after: 80 }, children: [] }));
   }
@@ -1096,18 +1533,20 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     children.push(
       createSectionBanner(
         isOfficial
-          ? `SECTION — B · Question ${shortQuestionNum} (Short Response Questions)`
-          : `Question ${shortQuestionNum}: Short Answer Questions`,
-        `Marks: ${shortTotalMarks} (${shortQuestions.length} Parts)`,
+          ? `SECTION – B (Marks ${shortTotalMarks})`
+          : `Q.${shortQuestionNum}: Short Answer Questions`,
+        isOfficial
+          ? `Q.${shortQuestionNum} (${shortQuestions.length} Parts · ${shortTotalMarks} Marks)`
+          : `(${shortQuestions.length} Parts · ${shortTotalMarks} Marks)`,
         isOfficial,
       ),
     );
 
     const shortNote = shortChoiceNote.trim()
-      ? `Note: ${shortChoiceNote.trim()}`
+      ? `Q.${shortQuestionNum}: ${shortChoiceNote.trim()}`
       : hasShortOr
-        ? 'Note: Write concise answers. Where "OR" is given, attempt either the first question or the alternative question.'
-        : 'Note: Write concise, to-the-point answers for the short questions below.';
+        ? `Q.${shortQuestionNum}: Attempt the following parts on the E-sheet (internal OR choice provided).`
+        : `Q.${shortQuestionNum}: Write concise, to-the-point answers for the short parts below.`;
 
     children.push(
       new Paragraph({
@@ -1131,25 +1570,43 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             cantSplit: true,
             children: [
               new TableCell({
-                width: { size: 46, type: WidthType.PERCENTAGE },
+                width: { size: 7, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: NO_CELL_BORDERS.top,
+                  left: NO_CELL_BORDERS.left,
+                  right: { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' },
+                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                },
+                margins: { top: 35, bottom: 35, left: 20, right: 30 },
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 0, after: 0 },
+                    children: [
+                      new TextRun({
+                        text: formatRomanPart(idx),
+                        bold: true,
+                        size: qFontSize,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: 41, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: NO_CELL_BORDERS.left,
                   right: NO_CELL_BORDERS.right,
                   bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                 },
-                margins: { top: 35, bottom: 35, left: 40, right: 60 },
+                margins: { top: 35, bottom: 35, left: 50, right: 50 },
                 children: [
                   new Paragraph({
                     spacing: { before: 0, after: 0 },
                     children: [
-                      new TextRun({
-                        text: `${idx + 1}. `,
-                        bold: true,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
                       new TextRun({
                         text: sq.prompt,
                         size: qFontSize,
@@ -1161,14 +1618,14 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 ],
               }),
               new TableCell({
-                width: { size: 8, type: WidthType.PERCENTAGE },
+                width: { size: 9, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                   right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                   bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                 },
-                margins: { top: 35, bottom: 35, left: 20, right: 20 },
+                margins: { top: 35, bottom: 35, left: 15, right: 15 },
                 children: [
                   new Paragraph({
                     alignment: AlignmentType.CENTER,
@@ -1181,12 +1638,19 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                         color: '475569',
                         font: 'Calibri',
                       }),
+                      new TextRun({
+                        text: `[${sq.marks}]`,
+                        size: 15,
+                        color: '64748B',
+                        font: 'Calibri',
+                        break: 1,
+                      }),
                     ],
                   }),
                 ],
               }),
               new TableCell({
-                width: { size: 46, type: WidthType.PERCENTAGE },
+                width: { size: 43, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: NO_CELL_BORDERS.left,
@@ -1236,7 +1700,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             spacing: { before: compactLayout ? 35 : 80, after: sq.orPrompt?.trim() ? 15 : 50 },
             children: [
               new TextRun({
-                text: `${idx + 1}. `,
+                text: `${formatRomanPart(idx)} `,
                 bold: true,
                 size: qFontSize,
                 color: '0F172A',
@@ -1295,18 +1759,22 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     }
   }
 
-  // 4. Section C: Long Questions
+  // 4. Section C: Long Questions (Q.3, Q.4, Q.5, Q.6...)
   if (longQuestions.length > 0) {
     if (shortQuestions.length > 0) {
       children.push(new Paragraph({ spacing: { before: compactLayout ? 40 : 80, after: compactLayout ? 40 : 80 }, children: [] }));
     }
 
+    const longRangeLabel = `Q.${longStartNum}${longQuestions.length > 1 ? `–Q.${longStartNum + longQuestions.length - 1}` : ''}`;
+
     children.push(
       createSectionBanner(
         isOfficial
-          ? `SECTION — C · Question ${longQuestionNum} (Extended / Long Questions)`
-          : `Question ${longQuestionNum}: Long / Descriptive Questions`,
-        `Marks: ${longTotalMarks} (${longQuestions.length} ${longQuestions.length === 1 ? 'Question' : 'Questions'})`,
+          ? `SECTION – C (Marks ${longTotalMarks})`
+          : 'SECTION – C: Long / Extended Questions',
+        isOfficial
+          ? `${longRangeLabel} (${longQuestions.length} ${longQuestions.length === 1 ? 'Question' : 'Questions'})`
+          : `(${longQuestions.length} ${longQuestions.length === 1 ? 'Question' : 'Questions'} · ${longTotalMarks} Marks)`,
         isOfficial,
       ),
     );
@@ -1314,8 +1782,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     const longNote = longChoiceNote.trim()
       ? `Note: ${longChoiceNote.trim()}`
       : hasLongOr
-        ? 'Note: Write detailed answers. Where "OR" is given, attempt either the first question or the alternative question.'
-        : 'Note: Attempt detailed answers with diagrams, equations, or headings where applicable.';
+        ? 'Note: Attempt all questions. Marks of each question are given along with each question (internal OR choice provided).'
+        : 'Note: Attempt all questions below with detailed explanations, diagrams, or equations where applicable.';
 
     children.push(
       new Paragraph({
@@ -1339,25 +1807,43 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             cantSplit: true,
             children: [
               new TableCell({
-                width: { size: 46, type: WidthType.PERCENTAGE },
+                width: { size: 8, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: NO_CELL_BORDERS.top,
+                  left: NO_CELL_BORDERS.left,
+                  right: { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' },
+                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+                },
+                margins: { top: 40, bottom: 40, left: 20, right: 30 },
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 0, after: 0 },
+                    children: [
+                      new TextRun({
+                        text: `Q.${longStartNum + idx}`,
+                        bold: true,
+                        size: qFontSize,
+                        color: '0F172A',
+                        font: 'Calibri',
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: 40, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: NO_CELL_BORDERS.left,
                   right: NO_CELL_BORDERS.right,
                   bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                 },
-                margins: { top: 40, bottom: 40, left: 40, right: 60 },
+                margins: { top: 40, bottom: 40, left: 50, right: 50 },
                 children: [
                   new Paragraph({
                     spacing: { before: 0, after: 0 },
                     children: [
-                      new TextRun({
-                        text: `${idx + 1}. `,
-                        bold: true,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
                       new TextRun({
                         text: lq.prompt,
                         size: qFontSize,
@@ -1369,14 +1855,14 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 ],
               }),
               new TableCell({
-                width: { size: 8, type: WidthType.PERCENTAGE },
+                width: { size: 9, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                   right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                   bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
                 },
-                margins: { top: 40, bottom: 40, left: 20, right: 20 },
+                margins: { top: 40, bottom: 40, left: 15, right: 15 },
                 children: [
                   new Paragraph({
                     alignment: AlignmentType.CENTER,
@@ -1389,12 +1875,19 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                         color: '475569',
                         font: 'Calibri',
                       }),
+                      new TextRun({
+                        text: `[${lq.marks}]`,
+                        size: 15,
+                        color: '64748B',
+                        font: 'Calibri',
+                        break: 1,
+                      }),
                     ],
                   }),
                 ],
               }),
               new TableCell({
-                width: { size: 46, type: WidthType.PERCENTAGE },
+                width: { size: 43, type: WidthType.PERCENTAGE },
                 borders: {
                   top: NO_CELL_BORDERS.top,
                   left: NO_CELL_BORDERS.left,
@@ -1444,7 +1937,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             spacing: { before: compactLayout ? 40 : 90, after: lq.orPrompt?.trim() ? 15 : 65 },
             children: [
               new TextRun({
-                text: `${idx + 1}. `,
+                text: `Q.${longStartNum + idx} `,
                 bold: true,
                 size: qFontSize,
                 color: '0F172A',
@@ -1623,7 +2116,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           spacing: { before: 160, after: 60 },
           children: [
             new TextRun({
-              text: `Question ${shortQuestionNum} — Short Questions Key Points`,
+              text: `Q.${shortQuestionNum} — Short Questions Key Points (Section B)`,
               bold: true,
               size: 20,
               color: '334155',
@@ -1639,7 +2132,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             spacing: { before: 60, after: 20 },
             children: [
               new TextRun({
-                text: `${idx + 1} (${sq.marks} Marks): ${sq.prompt}`,
+                text: `${formatRomanPart(idx)} (${sq.marks} Marks): ${sq.prompt}`,
                 bold: true,
                 size: 19,
                 color: '0F172A',
@@ -1690,7 +2183,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           spacing: { before: 160, after: 60 },
           children: [
             new TextRun({
-              text: `Question ${longQuestionNum} — Long Questions Solution Outline`,
+              text: `Q.${longStartNum}${longQuestions.length > 1 ? `–Q.${longStartNum + longQuestions.length - 1}` : ''} — Long Questions Solution Outline (Section C)`,
               bold: true,
               size: 20,
               color: '334155',
@@ -1706,7 +2199,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
             spacing: { before: 60, after: 20 },
             children: [
               new TextRun({
-                text: `${idx + 1} (${lq.marks} Marks): ${lq.prompt}`,
+                text: `Q.${longStartNum + idx} (${lq.marks} Marks): ${lq.prompt}`,
                 bold: true,
                 size: 19,
                 color: '0F172A',
@@ -1752,7 +2245,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     }
   }
 
-  const pageMargin = convertInchesToTwip(compactLayout ? 0.42 : 0.65);
+  const pageMargin = convertInchesToTwip(compactLayout ? 0.36 : 0.62);
   const isLegalDoc = paperSize === 'legal';
   const doc = new Document({
     sections: [

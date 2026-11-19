@@ -1045,9 +1045,13 @@ export interface MCQTest {
   longQuestions?: SubjectiveQuestion[];
   shortChoiceNote?: string;
   longChoiceNote?: string;
+  sectionATimeMinutes?: number;
+  patternLabel?: string;
   deliveryMode: TestDeliveryOverride;
   isActive: boolean;
   scheduledReleaseAt: string;
+  scheduledEndAt?: string;
+  allowedGrades?: GradeLevel[];
   createdBy: string;
   createdByName: string;
   createdByRole: 'teacher' | 'admin' | 'student_practice';
@@ -1078,6 +1082,8 @@ export interface TestAttempt {
   resultReleased: boolean;
   status: 'submitted' | 'reviewed';
   releasedBy: string;
+  autoCancelled?: boolean;
+  terminationReason?: string;
   submittedAt?: unknown;
   updatedAt?: unknown;
 }

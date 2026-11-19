@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  CalendarClock,
   CheckCircle2,
   Clock,
   Eye,
@@ -26,6 +27,7 @@ import { MCQTest, TestAttempt } from '../types';
 import { TestGeneratorPanel } from './TestGeneratorPanel';
 import { TestRunner } from './TestRunner';
 import { PrintablePaperModal } from './PrintablePaperModal';
+import { ScheduleAccessModal } from './ScheduleAccessModal';
 import { DeveloperFooter } from './DeveloperFooter';
 
 export function TeacherDashboard() {
@@ -35,6 +37,7 @@ export function TeacherDashboard() {
   const [submissions, setSubmissions] = useState<TestAttempt[]>([]);
   const [previewTest, setPreviewTest] = useState<MCQTest | null>(null);
   const [printingTest, setPrintingTest] = useState<MCQTest | null>(null);
+  const [schedulingTest, setSchedulingTest] = useState<MCQTest | null>(null);
 
   useEffect(() => {
     if (!userProfile) return;
@@ -292,13 +295,18 @@ export function TeacherDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 text-sm">
-                    {myTests.map((t) => (
+                    {myTests.map((t) => {
+                      const permittedClasses =
+                        t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+                      const endMs = t.scheduledEndAt ? new Date(t.scheduledEndAt).getTime() : NaN;
+                      const isExpired = !Number.isNaN(endMs) && endMs < Date.now();
+                      return (
                       <tr key={t.id} className="hover:bg-slate-50">
                         <td className="py-3 px-4 font-medium text-slate-900">{t.title}</td>
                         <td className="py-3 px-4 text-slate-600">
                           <div>{t.grade} · {t.subject}</div>
                           <div className="text-[11px] text-slate-500">
-                            {t.board === 'punjab_ptb' ? 'Punjab Board (PTB)' : 'Federal Board (NBF)'}
+                            {t.board === 'punjab_ptb' ? 'Punjab Board (PTB)' : 'Federal Board (NBF)'} · Permitted: {permittedClasses.join(', ')}
                           </div>
                         </td>
                         <td className="py-3 px-4 tabular-nums text-slate-700">
@@ -309,7 +317,11 @@ export function TeacherDashboard() {
                         </td>
                         <td className="py-3 px-4">
                           {t.isActive ? (
-                            <span className="text-xs font-semibold text-emerald-700">Active</span>
+                            isExpired ? (
+                              <span className="text-xs font-semibold text-red-700">Expired (Hidden)</span>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-700">Active</span>
+                            )
                           ) : (
                             <span className="text-xs font-semibold text-slate-500">Paused</span>
                           )}
@@ -318,8 +330,20 @@ export function TeacherDashboard() {
                               Starts: {new Date(t.scheduledReleaseAt).toLocaleString()}
                             </div>
                           )}
+                          {t.scheduledEndAt && (
+                            <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                              Closes: {new Date(t.scheduledEndAt).toLocaleString()}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-right space-x-3 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setSchedulingTest(t)}
+                            className="text-xs font-semibold text-indigo-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <CalendarClock className="w-3.5 h-3.5" /> Access / Time
+                          </button>
                           <button
                             type="button"
                             onClick={() => setPrintingTest(t)}
@@ -358,7 +382,8 @@ export function TeacherDashboard() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -400,7 +425,14 @@ export function TeacherDashboard() {
                             {sub.studentIdentifier || sub.studentId.slice(0, 8)}
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-slate-800">{sub.testTitle}</td>
+                        <td className="py-3 px-4">
+                          <div className="text-slate-800">{sub.testTitle}</div>
+                          {sub.autoCancelled && (
+                            <div className="text-[11px] font-semibold text-red-700 mt-0.5">
+                              Auto-Cancelled (Left Screen Lock)
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3 px-4 text-slate-600">
                           {sub.grade} · {sub.subject}
                         </td>
@@ -452,6 +484,8 @@ export function TeacherDashboard() {
           subject={printingTest.subject}
           topic={printingTest.topic}
           durationMinutes={printingTest.durationMinutes}
+          sectionATimeMinutes={printingTest.sectionATimeMinutes}
+          patternLabel={printingTest.patternLabel}
           marksPerQuestion={printingTest.marksPerQuestion}
           questions={printingTest.questions}
           shortQuestions={printingTest.shortQuestions}
@@ -459,6 +493,13 @@ export function TeacherDashboard() {
           shortChoiceNote={printingTest.shortChoiceNote}
           longChoiceNote={printingTest.longChoiceNote}
           onClose={() => setPrintingTest(null)}
+        />
+      )}
+
+      {schedulingTest && (
+        <ScheduleAccessModal
+          test={schedulingTest}
+          onClose={() => setSchedulingTest(null)}
         />
       )}
     </div>

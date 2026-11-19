@@ -207,6 +207,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         ? `IMPORTANT: Because the subject is Urdu, write EVERY MCQ, option, short question, long question, and model answer in clean, accurate Urdu script (اردو) aligned with the ${boardShortName} Urdu textbook.`
         : `Ensure accurate ${boardShortName} textbook facts, dates, definitions, authors, or formulas for both Science and Arts/Humanities streams.`;
 
+    const subjectStyleRule =
+      subject === 'Physics' ||
+      subject === 'Chemistry' ||
+      subject === 'Biology' ||
+      subject === 'Computer Science' ||
+      subject === 'General Science'
+        ? `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} SLO-based model papers — Section-B short questions must test conceptual reasoning, definitions/laws with formulas or biological mechanisms, and short calculations/code/diagrams; Section-C long questions (${longMarks} marks) should follow the board two-part or structured style (e.g. "(a) ... (b) ..." combining theory/mechanism with analytical, numerical, or application sub-parts when appropriate).`
+        : subject === 'Math' || subject === 'General Math'
+          ? `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} model papers — include exact equations/proofs/theorems and multi-step numerical/algebraic problem solving appropriate for ${longMarks}-mark Section-C questions and ${shortMarks}-mark Section-B parts.`
+          : subject === 'English'
+            ? `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} model papers — MCQs on vocabulary, grammar, and textual comprehension; Section-B short parts on reading/stanza comprehension, literary devices, and grammar; Section-C long questions (${longMarks} marks) on structured composition (essay, formal letter/application, report, or critical literary analysis).`
+            : subject === 'Urdu'
+              ? `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} Urdu model papers — write all stems in Urdu script covering حصہ معروضی (معروضی سوالات), حصہ دوم مختصر سوالات / تشریح اشعار و نثر / قواعد, and حصہ سوم مضمون، خط/درخواست یا تفصیلی سوالات.`
+              : subject === 'Islamiat' || subject === 'Islamic Studies' || subject === 'Pakistan Studies'
+                ? `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} model papers — base Section-B short parts on concise SLO concepts, Quranic/Hadith or historical/constitutional points, and Section-C long questions (${longMarks} marks) on comprehensive analytical answers.`
+                : `SUBJECT PAPER STYLE (${grade} ${subject}): Match authentic ${boardShortName} Arts & Humanities model papers with precise concepts in Section-B and structured ${longMarks}-mark analytical essays in Section-C.`;
+
     const boardLockRule = isPunjab
       ? 'STRICT SYLLABUS LOCK (PUNJAB BOARD ONLY): Use ONLY the official Punjab Curriculum and Textbook Board (PTB / PCTB) textbooks used by Punjab Boards (BISE Lahore, Rawalpindi, Multan, Gujranwala, Faisalabad). For 11th/1st Year English use Book I (Button Button, Clearing in the Sky, Dark They Were, Thank You Mam, Piece of String, Reward, Use of Force, Gulistan of Sadi, Foolish Quack, Mild Attack of Locusts, I Have a Dream, Gift of the Magi, God Be Praised, Overcoat, Angel and the Author) & Book III Plays/Poems; for 12th English use Book II & Goodbye Mr. Chips. NEVER use Federal Board National Book Foundation (NBF) new chapters.'
       : 'STRICT SYLLABUS LOCK (FEDERAL BOARD NBF ONLY): Use ONLY the new National Book Foundation (NBF / FBISE Islamabad) SLO-based textbook units. NEVER generate questions from Punjab Textbook Board (PTB / PCTB), Sindh Board, or old pre-SNC syllabi (for example, in 11th/1st Year English NEVER use "Button, Button", "Clearing in the Sky", "Dark They Were", "Responsibilities of Youth", "His First Flight", "Good Timber", or "Mr. Chips" — use ONLY the official NBF units like Family Values in Pakistan, Shooting Stars, The Wind, Butterflies, Clean Water and Sanitation, The Darkling Thrush, World Heritage Sites in Pakistan, Social Media, Sunshine After Rain, The Small Woman, The Three Questions, Break Break Break, Blow Blow Thou Winter Wind, Choice of a Profession, The Ninny, Fourteen, The Last Leaf).';
@@ -256,10 +273,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       `1. Align terminology, formulas, units, definitions, dates, and concepts strictly with the ${boardShortName} textbook.`,
       '2. Avoid ambiguous "All of the above" or "None of the above" MCQ options unless strictly appropriate.',
       `3. ${languageRule}`,
-      `4. ${boardLockRule}`,
+      `4. ${subjectStyleRule}`,
+      `5. ${boardLockRule}`,
       ...(Array.isArray(body.avoidPrompts) && body.avoidPrompts.length > 0
         ? [
-            `5. Do NOT repeat or paraphrase any of these already-generated questions: ${body.avoidPrompts
+            `6. Do NOT repeat or paraphrase any of these already-generated questions: ${body.avoidPrompts
               .filter((item: unknown): item is string => typeof item === 'string')
               .map((item: string) => item.trim().slice(0, 120))
               .filter(Boolean)

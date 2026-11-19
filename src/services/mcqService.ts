@@ -17,6 +17,7 @@ import {
   AccountStatus,
   DifficultyTier,
   ExamBoard,
+  GRADES,
   GradeLevel,
   MAX_NAME_LENGTH,
   MAX_TITLE_LENGTH,
@@ -409,9 +410,13 @@ export async function publishMCQTest(input: {
   longQuestions?: SubjectiveQuestion[];
   shortChoiceNote?: string;
   longChoiceNote?: string;
+  sectionATimeMinutes?: number;
+  patternLabel?: string;
   deliveryMode: TestDeliveryOverride;
   isActive: boolean;
   scheduledReleaseAt: string;
+  scheduledEndAt?: string;
+  allowedGrades?: GradeLevel[];
   createdBy: string;
   createdByName: string;
   createdByRole: 'teacher' | 'admin' | 'student_practice';
@@ -435,9 +440,22 @@ export async function publishMCQTest(input: {
   const cleanLongQuestions = sanitizeSubjList(input.longQuestions, 25);
   const cleanShortChoiceNote = (input.shortChoiceNote ?? '').trim().slice(0, 200);
   const cleanLongChoiceNote = (input.longChoiceNote ?? '').trim().slice(0, 200);
+  const cleanPatternLabel = (input.patternLabel ?? '').trim().slice(0, 120);
+  const cleanSectionATime =
+    typeof input.sectionATimeMinutes === 'number' &&
+    Number.isFinite(input.sectionATimeMinutes) &&
+    input.sectionATimeMinutes >= 1
+      ? Math.min(Math.max(Math.round(input.sectionATimeMinutes), 1), 120)
+      : undefined;
   const cleanSchoolName = (input.schoolName ?? '').trim().slice(0, 140);
   const cleanExamLabel = (input.examLabel ?? '').trim().slice(0, 80);
   const cleanPaperDate = (input.paperDate ?? '').trim().slice(0, 40);
+  const cleanScheduledEndAt = (input.scheduledEndAt ?? '').trim().slice(0, 64);
+  const rawAllowedGrades = Array.isArray(input.allowedGrades)
+    ? Array.from(new Set(input.allowedGrades.filter((g): g is GradeLevel => GRADES.includes(g))))
+    : [];
+  const cleanAllowedGrades: GradeLevel[] =
+    rawAllowedGrades.length > 0 ? rawAllowedGrades.slice(0, 4) : [input.grade];
   const cleanMarks = Number(input.marksPerQuestion);
   const marksPerQuestion =
     Number.isFinite(cleanMarks) && cleanMarks >= 0.25 && cleanMarks <= 10
@@ -472,9 +490,13 @@ export async function publishMCQTest(input: {
           ...(cleanLongChoiceNote ? { longChoiceNote: cleanLongChoiceNote } : {}),
         }
       : {}),
+    ...(cleanSectionATime ? { sectionATimeMinutes: cleanSectionATime } : {}),
+    ...(cleanPatternLabel ? { patternLabel: cleanPatternLabel } : {}),
     deliveryMode: input.deliveryMode,
     isActive: input.isActive,
     scheduledReleaseAt: input.scheduledReleaseAt.trim().slice(0, 64),
+    ...(cleanScheduledEndAt ? { scheduledEndAt: cleanScheduledEndAt } : {}),
+    allowedGrades: cleanAllowedGrades,
     createdBy: input.createdBy,
     createdByName: input.createdByName.trim().slice(0, MAX_NAME_LENGTH) || 'Faculty',
     createdByRole: input.createdByRole,
@@ -494,6 +516,35 @@ export async function toggleTestActiveStatus(testId: string, isActive: boolean):
   try {
     await updateDoc(doc(db, 'tests', testId), {
       isActive,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `tests/${testId}`);
+  }
+}
+
+export async function updateTestScheduleAndAccess(
+  testId: string,
+  patch: {
+    isActive: boolean;
+    scheduledReleaseAt: string;
+    scheduledEndAt: string;
+    allowedGrades: GradeLevel[];
+    fallbackGrade: GradeLevel;
+  },
+): Promise<void> {
+  const validGrades = Array.from(
+    new Set(patch.allowedGrades.filter((g): g is GradeLevel => GRADES.includes(g))),
+  );
+  const safeAllowedGrades: GradeLevel[] =
+    validGrades.length > 0 ? validGrades.slice(0, 4) : [patch.fallbackGrade];
+
+  try {
+    await updateDoc(doc(db, 'tests', testId), {
+      isActive: patch.isActive,
+      scheduledReleaseAt: patch.scheduledReleaseAt.trim().slice(0, 64),
+      scheduledEndAt: patch.scheduledEndAt.trim().slice(0, 64),
+      allowedGrades: safeAllowedGrades,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
@@ -532,6 +583,8 @@ export async function submitTestAttempt(input: {
   shortAnswers?: string[];
   longAnswers?: string[];
   globalSettings: SystemSettings;
+  autoCancelled?: boolean;
+  terminationReason?: string;
 }): Promise<TestAttempt> {
   const id = generateSafeId('attempt');
   const totalQuestions = input.test.questions.length;
@@ -559,6 +612,7 @@ export async function submitTestAttempt(input: {
       : input.test.deliveryMode;
 
   const isInstant = effectiveMode === 'instant';
+  const cleanTerminationReason = (input.terminationReason ?? '').trim().slice(0, 200);
 
   const attemptDoc: TestAttempt = {
     id,
@@ -583,6 +637,8 @@ export async function submitTestAttempt(input: {
     resultReleased: isInstant,
     status: isInstant ? 'reviewed' : 'submitted',
     releasedBy: isInstant ? 'system_instant' : '',
+    ...(input.autoCancelled ? { autoCancelled: true } : {}),
+    ...(cleanTerminationReason ? { terminationReason: cleanTerminationReason } : {}),
     submittedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };

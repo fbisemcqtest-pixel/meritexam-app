@@ -263,6 +263,15 @@
           "maxLength": 200,
           "description": "Optional section instruction for long questions (e.g. Attempt any 3 questions)."
         },
+        "sectionATimeMinutes": {
+          "type": "integer",
+          "description": "Optional Section-A time allowed in minutes."
+        },
+        "patternLabel": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional official FBISE pattern identifier label."
+        },
         "deliveryMode": {
           "type": "string",
           "enum": ["inherit", "instant", "admin_review"],
@@ -276,6 +285,15 @@
           "type": "string",
           "maxLength": 64,
           "description": "Optional ISO timestamp for scheduled release."
+        },
+        "scheduledEndAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Optional ISO timestamp when the paper closes and is hidden from students."
+        },
+        "allowedGrades": {
+          "type": "array",
+          "description": "Optional list of classes permitted to view and attempt this test."
         },
         "createdBy": {
           "type": "string",
@@ -420,6 +438,15 @@
           "type": "string",
           "maxLength": 128,
           "description": "Admin UID who released the result, or empty string."
+        },
+        "autoCancelled": {
+          "type": "boolean",
+          "description": "True if the exam was automatically submitted and cancelled due to breaking screen lock."
+        },
+        "terminationReason": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Reason recorded when the exam was automatically submitted and cancelled."
         },
         "submittedAt": {
           "type": "string",

@@ -664,6 +664,14 @@ export async function releaseAttemptResult(attemptId: string, adminOrTeacherUid:
   }
 }
 
+export async function deleteTestAttempt(attemptId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'attempts', attemptId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `attempts/${attemptId}`);
+  }
+}
+
 export async function updateAccountApproval(input: {
   uid: string;
   email: string;

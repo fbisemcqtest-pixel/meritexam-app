@@ -37,7 +37,11 @@ export function TeacherDashboard() {
   const [submissions, setSubmissions] = useState<TestAttempt[]>([]);
   const [previewTest, setPreviewTest] = useState<MCQTest | null>(null);
   const [printingTest, setPrintingTest] = useState<MCQTest | null>(null);
-  const [schedulingTest, setSchedulingTest] = useState<MCQTest | null>(null);
+  const [schedulingState, setSchedulingState] = useState<{
+    test: MCQTest;
+    initialActive?: boolean;
+    expiredNotice?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!userProfile) return;
@@ -298,8 +302,11 @@ export function TeacherDashboard() {
                     {myTests.map((t) => {
                       const permittedClasses =
                         t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+                      const startMs = t.scheduledReleaseAt ? new Date(t.scheduledReleaseAt).getTime() : NaN;
                       const endMs = t.scheduledEndAt ? new Date(t.scheduledEndAt).getTime() : NaN;
-                      const isExpired = !Number.isNaN(endMs) && endMs < Date.now();
+                      const now = Date.now();
+                      const isExpired = !Number.isNaN(endMs) && endMs < now;
+                      const isScheduled = !Number.isNaN(startMs) && startMs > now;
                       return (
                       <tr key={t.id} className="hover:bg-slate-50">
                         <td className="py-3 px-4 font-medium text-slate-900">{t.title}</td>
@@ -318,7 +325,9 @@ export function TeacherDashboard() {
                         <td className="py-3 px-4">
                           {t.isActive ? (
                             isExpired ? (
-                              <span className="text-xs font-semibold text-red-700">Expired (Hidden)</span>
+                              <span className="text-xs font-semibold text-red-700">Expired (Auto-Hidden)</span>
+                            ) : isScheduled ? (
+                              <span className="text-xs font-semibold text-amber-700">Scheduled (Countdown Active)</span>
                             ) : (
                               <span className="text-xs font-semibold text-emerald-700">Active</span>
                             )
@@ -336,13 +345,18 @@ export function TeacherDashboard() {
                             </div>
                           )}
                         </td>
-                        <td className="py-3 px-4 text-right space-x-3 whitespace-nowrap">
+                        <td className="py-3 px-4 text-right space-x-2.5 whitespace-nowrap">
                           <button
                             type="button"
-                            onClick={() => setSchedulingTest(t)}
-                            className="text-xs font-semibold text-indigo-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            onClick={() =>
+                              setSchedulingState({
+                                test: t,
+                                expiredNotice: isExpired,
+                              })
+                            }
+                            className="px-2.5 py-1 text-xs font-semibold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md inline-flex items-center gap-1 cursor-pointer"
                           >
-                            <CalendarClock className="w-3.5 h-3.5" /> Access / Time
+                            <CalendarClock className="w-3.5 h-3.5" /> Set Time / Access
                           </button>
                           <button
                             type="button"
@@ -360,10 +374,24 @@ export function TeacherDashboard() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void toggleTestActiveStatus(t.id, !t.isActive)}
+                            onClick={() => {
+                              if (isExpired) {
+                                setSchedulingState({
+                                  test: t,
+                                  initialActive: true,
+                                  expiredNotice: true,
+                                });
+                              } else {
+                                void toggleTestActiveStatus(t.id, !t.isActive);
+                              }
+                            }}
                             className="text-xs font-semibold text-slate-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
                           >
-                            {t.isActive ? (
+                            {isExpired ? (
+                              <>
+                                <PlayCircle className="w-3.5 h-3.5 text-emerald-700" /> Re-Activate &amp; Set Time
+                              </>
+                            ) : t.isActive ? (
                               <>
                                 <PauseCircle className="w-3.5 h-3.5" /> Pause
                               </>
@@ -392,18 +420,40 @@ export function TeacherDashboard() {
         )}
 
         {activeTab === 'submissions' && (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200">
-              <h2 className="font-display text-lg font-semibold text-slate-900">
-                Student Test Submissions
-              </h2>
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-slate-500">Tests Published by Me</p>
+                <p className="font-display text-2xl font-bold text-slate-900 tabular-nums mt-1">
+                  {myTests.length}
+                </p>
+              </div>
+              <div className="bg-white border border-emerald-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-emerald-700">Present / Submitted</p>
+                <p className="font-display text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+                  {submissions.filter((s) => !s.autoCancelled).length}
+                </p>
+              </div>
+              <div className="bg-white border border-orange-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-orange-700">Auto-Cancelled</p>
+                <p className="font-display text-2xl font-bold text-orange-700 tabular-nums mt-1">
+                  {submissions.filter((s) => s.autoCancelled).length}
+                </p>
+              </div>
             </div>
 
-            {submissions.length === 0 ? (
-              <div className="p-10 text-center text-sm text-slate-500">
-                No student submissions received yet.
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200">
+                <h2 className="font-display text-lg font-semibold text-slate-900">
+                  Student Test Submissions
+                </h2>
               </div>
-            ) : (
+
+              {submissions.length === 0 ? (
+                <div className="p-10 text-center text-sm text-slate-500">
+                  No student submissions received yet.
+                </div>
+              ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -467,6 +517,7 @@ export function TeacherDashboard() {
                 </table>
               </div>
             )}
+            </div>
           </div>
         )}
       </main>
@@ -496,10 +547,17 @@ export function TeacherDashboard() {
         />
       )}
 
-      {schedulingTest && (
+      {schedulingState && (
         <ScheduleAccessModal
-          test={schedulingTest}
-          onClose={() => setSchedulingTest(null)}
+          test={schedulingState.test}
+          initialActive={schedulingState.initialActive}
+          expiredNotice={schedulingState.expiredNotice}
+          currentUser={{
+            uid: userProfile.uid,
+            name: userProfile.fullName,
+            role: 'teacher',
+          }}
+          onClose={() => setSchedulingState(null)}
         />
       )}
     </div>

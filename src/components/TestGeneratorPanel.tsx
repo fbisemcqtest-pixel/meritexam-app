@@ -426,10 +426,12 @@ export function TestGeneratorPanel({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-200">
           <div>
             <h2 className="font-display text-lg font-semibold text-slate-900">
-              Paper & Assessment Builder (Official FBISE Pattern Auto-Sync)
+              Paper &amp; Assessment Builder ({board === 'punjab_ptb' ? 'Punjab Board · PTB / PCTB' : 'Federal Board · FBISE / NBF'})
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {CURRICULUM_BOARD_LABEL} · Selecting any Class &amp; Subject automatically applies its official Section A, B &amp; C pattern.
+              {board === 'punjab_ptb'
+                ? 'Punjab Curriculum & Textbook Board (PTB / PCTB / PECTAA) books loaded — select chapters below.'
+                : 'National Book Foundation (NBF / FBISE) books loaded — selecting Class & Subject auto-syncs Section A, B & C.'}
             </p>
           </div>
           <div className="text-xs text-slate-600 tabular-nums">
@@ -482,10 +484,14 @@ export function TestGeneratorPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="text-xs font-bold text-slate-900">
-                Official Board Pattern Track (Auto-Applied on Class / Subject Change)
+                {board === 'punjab_ptb'
+                  ? 'Punjab Board (PTB / PCTB) Pattern Track (Auto-Applied on Class / Subject Change)'
+                  : 'Official Board Pattern Track (Auto-Applied on Class / Subject Change)'}
               </span>
               <span className="ml-2 text-[11px] text-slate-500">
-                Verified from fbise.edu.pk (SSC-I/II &amp; HSSC-I/II)
+                {board === 'punjab_ptb'
+                  ? 'Punjab BISE / PCTB Textbook Alignment'
+                  : 'Verified from fbise.edu.pk (SSC-I/II & HSSC-I/II)'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -706,7 +712,7 @@ export function TestGeneratorPanel({
         <div className="mb-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <label className="text-xs font-semibold text-slate-700">
-              {activeBoardMeta.shortLabel} · {grade} {subject} Chapters (Select 1, 3, 5, 6 or more chapters — selected units turn blue)
+              {activeBoardMeta.shortLabel} · {grade} {subject} Chapters ({board === 'punjab_ptb' ? 'PTB / PCTB Textbook Units' : 'NBF Textbook Units'} — click to select)
               {selectedChapters.length > 0 && (
                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold tabular-nums">
                   {selectedChapters.length} Selected

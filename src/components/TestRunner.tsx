@@ -256,7 +256,11 @@ export function TestRunner({
         webkitRequestFullscreen?: () => Promise<void> | void;
       };
       if (el.requestFullscreen) {
-        await el.requestFullscreen();
+        try {
+          await el.requestFullscreen({ navigationUI: 'hide' });
+        } catch {
+          await el.requestFullscreen();
+        }
       } else if (el.webkitRequestFullscreen) {
         await el.webkitRequestFullscreen();
       }
@@ -353,7 +357,7 @@ export function TestRunner({
 
     let blurTimer: number | undefined;
     const handleWindowBlur = () => {
-      // Enforce window blur on top-level windows (live Desktop/Laptop/Mobile) after brief OS-toast grace
+      // Enforce window blur on top-level windows after a 2.5s grace so brief OS message/toast banners do not false-cancel
       if (window !== window.top) return;
       if (Date.now() - lockStartedAtRef.current < 450) return;
       blurTimer = window.setTimeout(() => {
@@ -362,7 +366,7 @@ export function TestRunner({
             'Screen Lock Violation: Switched focus to another window or application.',
           );
         }
-      }, 180);
+      }, 2500);
     };
 
     const handleWindowFocus = () => {
@@ -391,11 +395,17 @@ export function TestRunner({
       }
     };
 
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     window.addEventListener('popstate', handlePopState);
     window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
     document.addEventListener('contextmenu', handleContextMenu);
@@ -411,6 +421,7 @@ export function TestRunner({
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
       document.removeEventListener('contextmenu', handleContextMenu);
@@ -538,13 +549,33 @@ export function TestRunner({
                     Starting this paper engages <strong>Green Screen Lock</strong> (Fullscreen + Screen Wake Lock) until you finish and submit.
                   </li>
                   <li>
-                    Do <strong>not</strong> switch tabs, open another app, minimize the browser, press Back, or exit Fullscreen.
+                    <strong>Turn ON Do Not Disturb (DND):</strong> A small top message banner will not cancel your paper unless you tap/open it, but answering a call or a full-screen call screen switching you out of the browser will break Screen Lock.
                   </li>
                   <li>
-                    If you navigate away from the locked exam screen, your paper will be{' '}
+                    Do <strong>not</strong> switch tabs, open another app/message, minimize the browser, press Back, or exit Fullscreen.
+                  </li>
+                  <li>
+                    If you leave the locked exam screen, your paper will be{' '}
                     <strong className="text-red-700">automatically submitted and cancelled (ended)</strong> immediately.
                   </li>
                 </ul>
+              </div>
+
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-950 space-y-1.5">
+                <div className="font-bold text-amber-900">
+                  Mobile Phone Exam Protection (Block Calls &amp; Notifications):
+                </div>
+                <p className="leading-relaxed">
+                  For phone OS security, a website cannot turn off SIM calls automatically. Before starting on a phone:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1">
+                  <li>
+                    Swipe down your phone bar and turn ON <strong>Do Not Disturb (DND)</strong> so calls &amp; message popups stay blocked.
+                  </li>
+                  <li>
+                    For full kiosk lock: enable <strong>App Pinning / Screen Pinning</strong> (Android Settings → Security) or <strong>Guided Access</strong> (iPhone) on the browser.
+                  </li>
+                </ol>
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 pt-1">

@@ -387,7 +387,7 @@ service cloud.firestore {
 
       allow list: if isAdmin() ||
         isApprovedTeacher() ||
-        (isApprovedStudent() && existing().isActive == true && existing().createdByRole != 'student_practice');
+        (isApprovedStudent() && existing().isActive == true);
 
       allow create: if isVerifiedEmail() &&
         isValidId(testId) &&

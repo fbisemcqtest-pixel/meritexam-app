@@ -247,11 +247,11 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                   Board-Aligned Science & Math Tracks
                 </p>
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-                  NBF Textbook Subjects Across All 4 Classes
+                  Federal (NBF) &amp; Punjab (PTB) Subjects Across All 4 Classes
                 </h2>
                 <p className="text-sm text-slate-600 mt-2 leading-relaxed">
                   Every chapter from 9th, 10th, 1st A (11th), and 2nd Year (12th) National Book
-                  Foundation textbooks is mapped for instant paper creation and timed online tests.
+                  Foundation (FBISE) and Punjab Textbook Board (PTB / PCTB) books is mapped for instant paper creation.
                 </p>
               </div>
               <div className="text-xs text-slate-500 font-medium">

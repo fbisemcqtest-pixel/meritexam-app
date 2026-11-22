@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
-import { CalendarClock, Check, X } from 'lucide-react';
+import { CalendarClock, Check, CopyPlus, X } from 'lucide-react';
 import { GRADES, GRADE_LABELS, GradeLevel, MCQTest } from '../types';
-import { updateTestScheduleAndAccess } from '../services/mcqService';
+import { publishMCQTest, updateTestScheduleAndAccess } from '../services/mcqService';
 
 interface ScheduleAccessModalProps {
   test: MCQTest;
+  initialActive?: boolean;
+  expiredNotice?: boolean;
+  currentUser?: {
+    uid: string;
+    name: string;
+    role: 'admin' | 'teacher';
+  };
   onClose: () => void;
 }
 
@@ -16,13 +23,24 @@ function isoToLocalInput(iso?: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps) {
-  const [isActive, setIsActive] = useState(test.isActive);
+export function ScheduleAccessModal({
+  test,
+  initialActive,
+  expiredNotice = false,
+  currentUser,
+  onClose,
+}: ScheduleAccessModalProps) {
+  const [isActive, setIsActive] = useState(initialActive ?? test.isActive);
   const [allowedGrades, setAllowedGrades] = useState<GradeLevel[]>(
     test.allowedGrades && test.allowedGrades.length > 0 ? test.allowedGrades : [test.grade],
   );
-  const [startAt, setStartAt] = useState(() => isoToLocalInput(test.scheduledReleaseAt));
-  const [endAt, setEndAt] = useState(() => isoToLocalInput(test.scheduledEndAt));
+  const [startAt, setStartAt] = useState(() =>
+    expiredNotice ? '' : isoToLocalInput(test.scheduledReleaseAt),
+  );
+  const [endAt, setEndAt] = useState(() =>
+    expiredNotice ? '' : isoToLocalInput(test.scheduledEndAt),
+  );
+  const [createFreshReTest, setCreateFreshReTest] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -61,18 +79,55 @@ export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps)
         setErrorMsg('Closing / End Date & Time must be after Start Date & Time.');
         return;
       }
+      if (isActive && parsedEnd.getTime() <= Date.now()) {
+        setErrorMsg('Closing / End Date & Time cannot already be in the past while Active is checked.');
+        return;
+      }
       endIso = parsedEnd.toISOString();
     }
 
+    const nextAllowedGrades = allowedGrades.length > 0 ? allowedGrades : [test.grade];
+
     setSaving(true);
     try {
-      await updateTestScheduleAndAccess(test.id, {
-        isActive,
-        scheduledReleaseAt: startIso,
-        scheduledEndAt: endIso,
-        allowedGrades: allowedGrades.length > 0 ? allowedGrades : [test.grade],
-        fallbackGrade: test.grade,
-      });
+      if (createFreshReTest && currentUser) {
+        await publishMCQTest({
+          title: test.title.includes('(Re-Test)') ? test.title : `${test.title} (Re-Test)`,
+          board: test.board,
+          schoolName: test.schoolName,
+          examLabel: test.examLabel,
+          paperDate: test.paperDate,
+          grade: test.grade,
+          subject: test.subject,
+          topic: test.topic,
+          difficulty: test.difficulty,
+          durationMinutes: test.durationMinutes,
+          marksPerQuestion: test.marksPerQuestion,
+          questions: test.questions,
+          shortQuestions: test.shortQuestions,
+          longQuestions: test.longQuestions,
+          shortChoiceNote: test.shortChoiceNote,
+          longChoiceNote: test.longChoiceNote,
+          sectionATimeMinutes: test.sectionATimeMinutes,
+          patternLabel: test.patternLabel,
+          deliveryMode: currentUser.role === 'admin' ? test.deliveryMode : 'inherit',
+          isActive,
+          scheduledReleaseAt: startIso,
+          scheduledEndAt: endIso,
+          allowedGrades: nextAllowedGrades,
+          createdBy: currentUser.uid,
+          createdByName: currentUser.name,
+          createdByRole: currentUser.role,
+        });
+      } else {
+        await updateTestScheduleAndAccess(test.id, {
+          isActive,
+          scheduledReleaseAt: startIso,
+          scheduledEndAt: endIso,
+          allowedGrades: nextAllowedGrades,
+          fallbackGrade: test.grade,
+        });
+      }
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to update schedule & permissions.');
@@ -83,13 +138,13 @@ export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps)
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full shadow-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full shadow-xl overflow-hidden max-h-[92vh] overflow-y-auto">
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50">
           <div className="flex items-center gap-2 min-w-0">
             <CalendarClock className="w-5 h-5 text-blue-700 shrink-0" />
             <div className="min-w-0">
               <h3 className="font-display text-base font-bold text-slate-900 truncate">
-                Schedule &amp; Student Class Access
+                Set Paper Time &amp; Class Access
               </h3>
               <p className="text-xs text-slate-500 truncate">{test.title}</p>
             </div>
@@ -104,6 +159,13 @@ export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps)
         </div>
 
         <form onSubmit={handleSave} className="p-5 space-y-4">
+          {expiredNotice && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+              This paper&apos;s previous time window has already ended. Set the new Start Date &amp;
+              Time and Closing Time below to take it again.
+            </div>
+          )}
+
           <label className="flex items-center gap-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
             <input
               type="checkbox"
@@ -116,10 +178,31 @@ export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps)
                 Active &amp; Permitted for Student Portal
               </div>
               <div className="text-[11px] text-slate-500">
-                Uncheck to hide this paper from all students while keeping it for printing.
+                Uncheck to pause/hide this paper from all students while keeping it for printing.
               </div>
             </div>
           </label>
+
+          {currentUser && (
+            <label className="flex items-start gap-2.5 p-3 rounded-lg bg-indigo-50/70 border border-indigo-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createFreshReTest}
+                onChange={(e) => setCreateFreshReTest(e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-indigo-700"
+              />
+              <div>
+                <div className="text-xs font-bold text-indigo-950 inline-flex items-center gap-1.5">
+                  <CopyPlus className="w-3.5 h-3.5 text-indigo-700" />
+                  Re-Conduct as Fresh Re-Test (Allow Previous Students Again)
+                </div>
+                <div className="text-[11px] text-indigo-800 mt-0.5">
+                  Check this if students already submitted this paper earlier and you want them to
+                  attempt it again while keeping previous results intact.
+                </div>
+              </div>
+            </label>
+          )}
 
           <div className="space-y-2">
             <label className="block text-xs font-semibold text-slate-700">
@@ -235,7 +318,11 @@ export function ScheduleAccessModal({ test, onClose }: ScheduleAccessModalProps)
               disabled={saving}
               className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg cursor-pointer"
             >
-              {saving ? 'Saving...' : 'Save Schedule & Access'}
+              {saving
+                ? 'Saving...'
+                : createFreshReTest
+                  ? 'Publish Fresh Re-Test Schedule'
+                  : 'Save Schedule & Access'}
             </button>
           </div>
         </form>

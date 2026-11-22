@@ -98,16 +98,33 @@ function getSubjectAccent(subject: SubjectName): SubjectAccentStyle {
   return INDIGO_ACCENT;
 }
 
+function parseTimestampMs(value: unknown): number | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const ms = new Date(trimmed).getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (typeof value === 'object') {
+    const maybeTs = value as { toDate?: () => Date; seconds?: number };
+    if (typeof maybeTs.toDate === 'function') {
+      const ms = maybeTs.toDate().getTime();
+      return Number.isNaN(ms) ? null : ms;
+    }
+    if (typeof maybeTs.seconds === 'number') {
+      return maybeTs.seconds * 1000;
+    }
+  }
+  return null;
+}
+
 function getScheduledStartMs(test: MCQTest): number | null {
-  if (!test.scheduledReleaseAt) return null;
-  const ms = new Date(test.scheduledReleaseAt).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  return parseTimestampMs(test.scheduledReleaseAt);
 }
 
 function getScheduledEndMs(test: MCQTest): number | null {
-  if (!test.scheduledEndAt) return null;
-  const ms = new Date(test.scheduledEndAt).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  return parseTimestampMs(test.scheduledEndAt);
 }
 
 function formatCountdownParts(diffMs: number) {
@@ -134,6 +151,7 @@ export function StudentDashboard() {
   const [activeTests, setActiveTests] = useState<MCQTest[]>([]);
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Active Test Runner state
   const [runningTest, setRunningTest] = useState<MCQTest | null>(null);
@@ -158,10 +176,17 @@ export function StudentDashboard() {
       testsQuery,
       (snap) => {
         setActiveTests(snap.docs.map((d) => d.data() as MCQTest));
+        setLoadError(null);
         setLoading(false);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'tests');
+        setLoading(false);
+        setLoadError('Unable to load examinations right now. Please refresh or contact your administrator.');
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'tests');
+        } catch (err) {
+          console.error(err);
+        }
       },
     );
 
@@ -181,7 +206,11 @@ export function StudentDashboard() {
         setAttempts(list);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'attempts');
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'attempts');
+        } catch (err) {
+          console.error(err);
+        }
       },
     );
 
@@ -194,13 +223,14 @@ export function StudentDashboard() {
   const studentGrade = userProfile?.grade;
 
   const permittedTests = useMemo(() => {
+    const normalizedStudentGrade = studentGrade?.trim();
     return activeTests
       .filter((t) => t.isActive === true && t.createdByRole !== 'student_practice')
       .filter((t) => {
-        if (!studentGrade || studentGrade === 'All') return true;
+        if (!normalizedStudentGrade || normalizedStudentGrade === 'All') return true;
         const allowed =
           t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
-        return allowed.includes(studentGrade);
+        return allowed.some((g) => String(g).trim() === normalizedStudentGrade);
       })
       .filter((t) => {
         const endMs = getScheduledEndMs(t);
@@ -227,6 +257,57 @@ export function StudentDashboard() {
     });
     return map;
   }, [attempts]);
+
+  const allMissedTests = useMemo(() => {
+    const normalizedStudentGrade = studentGrade?.trim();
+    return activeTests
+      .filter((t) => t.isActive === true && t.createdByRole !== 'student_practice')
+      .filter((t) => {
+        if (!normalizedStudentGrade || normalizedStudentGrade === 'All') return true;
+        const allowed =
+          t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+        return allowed.some((g) => String(g).trim() === normalizedStudentGrade);
+      })
+      .filter((t) => {
+        const endMs = getScheduledEndMs(t);
+        if (endMs === null || nowMs <= endMs) return false;
+        return !attemptsByTestId.has(t.id);
+      })
+      .sort((a, b) => (getScheduledEndMs(b) ?? 0) - (getScheduledEndMs(a) ?? 0));
+  }, [activeTests, studentGrade, nowMs, attemptsByTestId]);
+
+  const missedTests = useMemo(() => {
+    return allMissedTests.filter((t) =>
+      subjectFilter === 'All' ? true : t.subject === subjectFilter,
+    );
+  }, [allMissedTests, subjectFilter]);
+
+  const totalResultsCount = attempts.length + allMissedTests.length;
+
+  const resultAttendanceRows = useMemo(() => {
+    type StudentRow =
+      | { kind: 'attempt'; sortMs: number; attempt: TestAttempt }
+      | { kind: 'absent'; sortMs: number; test: MCQTest; endMs: number };
+
+    const rows: StudentRow[] = attempts.map((attempt) => ({
+      kind: 'attempt',
+      sortMs: parseTimestampMs(attempt.submittedAt) ?? 0,
+      attempt,
+    }));
+
+    allMissedTests.forEach((test) => {
+      const endMs = getScheduledEndMs(test) ?? 0;
+      rows.push({
+        kind: 'absent',
+        sortMs: endMs,
+        test,
+        endMs,
+      });
+    });
+
+    rows.sort((a, b) => b.sortMs - a.sortMs);
+    return rows;
+  }, [attempts, allMissedTests]);
 
   function handleOpenAttemptReview(attempt: TestAttempt) {
     if (!attempt.resultReleased || attempt.autoCancelled) return;
@@ -279,13 +360,18 @@ export function StudentDashboard() {
             <button
               type="button"
               onClick={() => setActiveTab('results')}
-              className={`py-5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`py-5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
                 activeTab === 'results'
                   ? 'border-blue-700 text-slate-900 font-semibold'
                   : 'border-transparent text-slate-600 hover:text-slate-900'
               }`}
             >
-              My Results ({attempts.length})
+              <span>My Results &amp; Attendance ({totalResultsCount})</span>
+              {allMissedTests.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-red-100 text-red-700 rounded">
+                  {allMissedTests.length} Absent
+                </span>
+              )}
             </button>
           </nav>
 
@@ -322,7 +408,7 @@ export function StudentDashboard() {
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
             }`}
           >
-            My Results ({attempts.length})
+            Results ({totalResultsCount}{allMissedTests.length > 0 ? ` · ${allMissedTests.length} Absent` : ''})
           </button>
         </nav>
 
@@ -492,6 +578,11 @@ export function StudentDashboard() {
               {loading ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
                   Loading permitted assessments...
+                </div>
+              ) : loadError ? (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
+                  <ShieldAlert className="w-8 h-8 text-red-600 mx-auto mb-2" />
+                  <p className="text-sm font-semibold text-red-900">{loadError}</p>
                 </div>
               ) : permittedTests.length === 0 ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
@@ -690,92 +781,227 @@ export function StudentDashboard() {
                 </div>
               )}
             </div>
+
+            {missedTests.length > 0 && (
+              <section aria-label="Missed or Absent Examinations" className="space-y-3 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-red-900 inline-flex items-center gap-2">
+                      <ShieldAlert className="w-5 h-5 text-red-600" />
+                      Missed / Absent Examinations ({missedTests.length})
+                    </h2>
+                    <p className="text-xs text-slate-600">
+                      Time expired before submission — these Class {userProfile.grade} tests are recorded as Absent in your examination log.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {missedTests.map((test) => {
+                    const endMs = getScheduledEndMs(test);
+                    const totalMarks =
+                      Math.round((test.questionCount || test.questions?.length || 0) * (test.marksPerQuestion ?? 1) * 100) /
+                      100;
+                    return (
+                      <div
+                        key={test.id}
+                        className="bg-white border border-red-200 rounded-xl overflow-hidden shadow-xs flex flex-col justify-between"
+                      >
+                        <div className="h-1.5 w-full bg-gradient-to-r from-red-500 to-rose-600" />
+                        <div className="p-4 space-y-2.5 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                              {test.board === 'punjab_ptb' ? 'Punjab Board' : 'Federal NBF'} · {test.grade} · {test.subject}
+                            </span>
+                            <span className="px-2 py-0.5 text-[11px] font-bold bg-red-100 text-red-800 border border-red-200 rounded">
+                              ABSENT (Missed)
+                            </span>
+                          </div>
+                          <h3 className="font-display text-base font-bold text-slate-900 leading-snug">
+                            {test.title}
+                          </h3>
+                          {endMs !== null && (
+                            <p className="text-xs text-red-700 tabular-nums">
+                              Window Closed: <span className="font-semibold">{new Date(endMs).toLocaleString()}</span>
+                            </p>
+                          )}
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600 tabular-nums">
+                            <span>Score: <strong className="text-red-700">0 / {totalMarks} (0%)</strong></span>
+                            <span>{test.durationMinutes} min</span>
+                          </div>
+                        </div>
+                        <div className="px-4 py-2.5 bg-red-50/80 border-t border-red-100 text-[11px] font-semibold text-red-800">
+                          Not Attempted Before Closing Time · Marked Absent
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </div>
         )}
 
         {activeTab === 'results' && (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200">
-              <h2 className="font-display text-lg font-semibold text-slate-900">
-                My Submitted Assessments
-              </h2>
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-slate-500">Total Class Tests Recorded</p>
+                <p className="font-display text-2xl font-bold text-slate-900 tabular-nums mt-1">
+                  {totalResultsCount}
+                </p>
+              </div>
+              <div className="bg-white border border-emerald-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-emerald-700">Present / Submitted</p>
+                <p className="font-display text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+                  {attempts.filter((a) => !a.autoCancelled).length}
+                </p>
+              </div>
+              <div className="bg-white border border-red-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-red-700">Absent (Missed)</p>
+                <p className="font-display text-2xl font-bold text-red-700 tabular-nums mt-1">
+                  {allMissedTests.length}
+                </p>
+              </div>
             </div>
 
-            {attempts.length === 0 ? (
-              <div className="p-10 text-center">
-                <FileText className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                <p className="text-sm text-slate-600">No tests submitted yet.</p>
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200">
+                <h2 className="font-display text-lg font-semibold text-slate-900">
+                  My Submitted &amp; Missed Assessments
+                </h2>
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                      <th className="py-3 px-4">Assessment</th>
-                      <th className="py-3 px-4">Class · Subject</th>
-                      <th className="py-3 px-4">Score</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 text-sm">
-                    {attempts.map((attempt) => (
-                      <tr key={attempt.id} className="hover:bg-slate-50">
-                        <td className="py-3 px-4 font-medium text-slate-900">
-                          {attempt.testTitle}
-                        </td>
-                        <td className="py-3 px-4 text-slate-600">
-                          {attempt.grade} · {attempt.subject}
-                        </td>
-                        <td className="py-3 px-4 tabular-nums font-semibold text-slate-900">
-                          {attempt.resultReleased
-                            ? `${attempt.obtainedMarks ?? attempt.score} / ${attempt.totalMarks ?? attempt.totalQuestions} (${attempt.percentage}%)`
-                            : 'Held Until Release'}
-                        </td>
-                        <td className="py-3 px-4">
-                          {attempt.autoCancelled && (
-                            <div className="text-xs font-semibold text-red-700 inline-flex items-center gap-1 mr-2">
-                              <ShieldAlert className="w-3.5 h-3.5" />
-                              Auto-Cancelled (Left Screen)
-                            </div>
-                          )}
-                          {attempt.resultReleased ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Released
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
-                              <Clock className="w-3.5 h-3.5" />
-                              Pending Admin Release
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          {attempt.autoCancelled ? (
-                            <span className="text-xs text-red-600 inline-flex items-center gap-1">
-                              <Lock className="w-3 h-3" /> Cancelled
-                            </span>
-                          ) : attempt.resultReleased ? (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAttemptReview(attempt)}
-                              className="text-xs font-semibold text-blue-700 hover:underline cursor-pointer"
-                            >
-                              View Answer Key
-                            </button>
-                          ) : (
-                            <span className="text-xs text-slate-400 inline-flex items-center gap-1">
-                              <Lock className="w-3 h-3" /> Locked
-                            </span>
-                          )}
-                        </td>
+
+              {resultAttendanceRows.length === 0 ? (
+                <div className="p-10 text-center">
+                  <FileText className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                  <p className="text-sm text-slate-600">No tests recorded yet.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                        <th className="py-3 px-4">Assessment</th>
+                        <th className="py-3 px-4">Class · Subject</th>
+                        <th className="py-3 px-4">Attendance</th>
+                        <th className="py-3 px-4">Score</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4 text-right">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 text-sm">
+                      {resultAttendanceRows.map((row) => {
+                        if (row.kind === 'absent') {
+                          const { test, endMs } = row;
+                          const totalMarks =
+                            Math.round((test.questionCount || test.questions?.length || 0) * (test.marksPerQuestion ?? 1) * 100) /
+                            100;
+                          return (
+                            <tr key={`absent_${test.id}`} className="bg-red-50/30 hover:bg-red-50/60">
+                              <td className="py-3 px-4">
+                                <div className="font-medium text-slate-900">{test.title}</div>
+                                <div className="text-[11px] text-red-700 tabular-nums mt-0.5">
+                                  Closed: {new Date(endMs).toLocaleString()}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-slate-600">
+                                {test.grade} · {test.subject}
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-red-100 text-red-800 border border-red-200 rounded">
+                                  <ShieldAlert className="w-3.5 h-3.5" />
+                                  Absent (Missed)
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 tabular-nums font-semibold text-red-700">
+                                0 / {totalMarks} (0%)
+                              </td>
+                              <td className="py-3 px-4 text-xs font-semibold text-red-700">
+                                Paper Not Attempted
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                <span className="text-xs text-red-700 inline-flex items-center gap-1">
+                                  <Lock className="w-3 h-3" /> Time Expired
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        const { attempt } = row;
+                        return (
+                          <tr key={attempt.id} className="hover:bg-slate-50">
+                            <td className="py-3 px-4 font-medium text-slate-900">
+                              {attempt.testTitle}
+                            </td>
+                            <td className="py-3 px-4 text-slate-600">
+                              {attempt.grade} · {attempt.subject}
+                            </td>
+                            <td className="py-3 px-4">
+                              {attempt.autoCancelled ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold bg-orange-100 text-orange-800 border border-orange-200 rounded">
+                                  <ShieldAlert className="w-3.5 h-3.5" />
+                                  Cancelled
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 rounded">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Present
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 tabular-nums font-semibold text-slate-900">
+                              {attempt.resultReleased
+                                ? `${attempt.obtainedMarks ?? attempt.score} / ${attempt.totalMarks ?? attempt.totalQuestions} (${attempt.percentage}%)`
+                                : 'Held Until Release'}
+                            </td>
+                            <td className="py-3 px-4">
+                              {attempt.autoCancelled && (
+                                <div className="text-xs font-semibold text-red-700 inline-flex items-center gap-1 mr-2">
+                                  <ShieldAlert className="w-3.5 h-3.5" />
+                                  Auto-Cancelled (Left Screen)
+                                </div>
+                              )}
+                              {attempt.resultReleased ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Released
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  Pending Admin Release
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              {attempt.autoCancelled ? (
+                                <span className="text-xs text-red-600 inline-flex items-center gap-1">
+                                  <Lock className="w-3 h-3" /> Cancelled
+                                </span>
+                              ) : attempt.resultReleased ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAttemptReview(attempt)}
+                                  className="text-xs font-semibold text-blue-700 hover:underline cursor-pointer"
+                                >
+                                  View Answer Key
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-400 inline-flex items-center gap-1">
+                                  <Lock className="w-3 h-3" /> Locked
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

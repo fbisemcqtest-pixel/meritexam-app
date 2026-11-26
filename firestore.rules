@@ -140,6 +140,10 @@ service cloud.firestore {
       );
     }
 
+    function isSingleStudentGrade(gradeVal) {
+      return gradeVal in ['9th', '10th', '1st A', '2nd Year'];
+    }
+
     function isValidUserAccount(data) {
       return data.keys().hasAll([
           'uid', 'email', 'fullName', 'role', 'status',
@@ -180,13 +184,14 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'resultMode', 'testAccessMode', 'allowStudentInstantPractice',
-          'allowTeacherPaperCreation',
+          'allowTeacherPaperCreation', 'allowStudentAnswerKeyReview',
           'defaultTimeLimitMinutes', 'passingPercentage', 'updatedBy', 'updatedAt'
         ]) &&
         data.resultMode in ['instant', 'admin_review'] &&
         data.testAccessMode in ['instant_open', 'scheduled_window'] &&
         data.allowStudentInstantPractice is bool &&
         (!('allowTeacherPaperCreation' in data) || data.allowTeacherPaperCreation is bool) &&
+        (!('allowStudentAnswerKeyReview' in data) || data.allowStudentAnswerKeyReview is bool) &&
         data.defaultTimeLimitMinutes is int && data.defaultTimeLimitMinutes >= 1 && data.defaultTimeLimitMinutes <= 180 &&
         data.passingPercentage is int && data.passingPercentage >= 1 && data.passingPercentage <= 100 &&
         data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128 &&
@@ -264,7 +269,7 @@ service cloud.firestore {
           'shortAnswers', 'longAnswers',
           'score', 'totalQuestions', 'marksPerQuestion', 'obtainedMarks', 'totalMarks',
           'percentage', 'deliveryModeUsed',
-          'resultReleased', 'status', 'releasedBy', 'autoCancelled', 'terminationReason',
+          'resultReleased', 'answerKeyReleased', 'status', 'releasedBy', 'autoCancelled', 'terminationReason',
           'submittedAt', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
@@ -288,6 +293,7 @@ service cloud.firestore {
         data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
         data.deliveryModeUsed in ['instant', 'admin_review'] &&
         data.resultReleased is bool &&
+        (!('answerKeyReleased' in data) || data.answerKeyReleased is bool) &&
         data.status in ['submitted', 'reviewed'] &&
         data.releasedBy is string && data.releasedBy.size() <= 128 &&
         (!('autoCancelled' in data) || data.autoCancelled is bool) &&
@@ -312,6 +318,7 @@ service cloud.firestore {
         incoming().email == request.auth.token.email &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        (incoming().role != 'student' || isSingleStudentGrade(incoming().grade)) &&
         (
           (isMainAdmin() && incoming().role == 'admin' && incoming().status == 'approved') ||
           (incoming().role in ['student', 'teacher'] && incoming().status == 'pending')
@@ -328,18 +335,31 @@ service cloud.firestore {
           (
             isMainAdmin() &&
             (!isMainAdminEmailValue(existing().email) || (incoming().role == 'admin' && incoming().status == 'approved')) &&
+            (incoming().role != 'student' || ((incoming().status != 'approved' && incoming().grade == existing().grade) || isSingleStudentGrade(incoming().grade))) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'grade', 'subject', 'approvedBy', 'updatedAt'])
           ) ||
           (
             isAdmin() &&
             existing().role != 'admin' &&
             incoming().role != 'admin' &&
+            (incoming().role != 'student' || ((incoming().status != 'approved' && incoming().grade == existing().grade) || isSingleStudentGrade(incoming().grade))) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'grade', 'subject', 'approvedBy', 'updatedAt'])
           ) ||
           (
             isOwner(userId) &&
             incoming().role == existing().role &&
             incoming().status == existing().status &&
+            (
+              existing().role != 'student' ||
+              (
+                isSingleStudentGrade(incoming().grade) &&
+                (
+                  incoming().grade == existing().grade ||
+                  !isSingleStudentGrade(existing().grade) ||
+                  existing().status == 'pending'
+                )
+              )
+            ) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'grade', 'subject', 'identifier', 'updatedAt'])
           )
         );
@@ -479,7 +499,7 @@ service cloud.firestore {
         (
           (
             isAdmin() &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['resultReleased', 'status', 'releasedBy', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['resultReleased', 'answerKeyReleased', 'status', 'releasedBy', 'updatedAt'])
           ) ||
           (
             isApprovedTeacher() &&

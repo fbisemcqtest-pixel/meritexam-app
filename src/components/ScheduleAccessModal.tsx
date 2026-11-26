@@ -296,6 +296,11 @@ export function ScheduleAccessModal({
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {endAt
+                  ? `Auto-hides from students after ${new Date(endAt).toLocaleString()}.`
+                  : 'If left blank: scheduled papers auto-close after Start + Duration, and immediate papers auto-close after 12 hours.'}
+              </p>
             </div>
           </div>
 

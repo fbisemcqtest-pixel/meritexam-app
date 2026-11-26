@@ -112,6 +112,139 @@ function addDirectoryToZip(zip: JSZip, baseDir: string, currentDir: string) {
   }
 }
 
+interface EditionZipConfig {
+  grade: '9th' | '10th' | '1st A' | '2nd Year' | 'All';
+  titleLabel: string;
+  zipFilename: string;
+}
+
+function resolveEditionZipConfig(raw: unknown): EditionZipConfig {
+  const val = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (val === '9th' || val === '9') {
+    return {
+      grade: '9th',
+      titleLabel: '9th Class (SSC-I)',
+      zipFilename: 'meritexam-9th-class.zip',
+    };
+  }
+  if (val === '10th' || val === '10') {
+    return {
+      grade: '10th',
+      titleLabel: '10th Class (SSC-II)',
+      zipFilename: 'meritexam-10th-class.zip',
+    };
+  }
+  if (val === '1st-a' || val === '1st a' || val === '1st-year' || val === '11th') {
+    return {
+      grade: '1st A',
+      titleLabel: '1st Year / 11th (HSSC-I)',
+      zipFilename: 'meritexam-1st-year.zip',
+    };
+  }
+  if (val === '2nd-year' || val === '2nd year' || val === '12th') {
+    return {
+      grade: '2nd Year',
+      titleLabel: '2nd Year / 12th (HSSC-II)',
+      zipFilename: 'meritexam-2nd-year.zip',
+    };
+  }
+  return {
+    grade: 'All',
+    titleLabel: 'Complete All-Classes (9th, 10th, 1st A & 2nd Year)',
+    zipFilename: 'meritexam-complete-all-classes.zip',
+  };
+}
+
+function buildDeploymentGuideText(cfg: EditionZipConfig): string {
+  return `====================================================================
+MERITEXAM DEPLOYMENT GUIDE — ${cfg.titleLabel.toUpperCase()}
+====================================================================
+
+EDITION INCLUDED IN THIS ZIP:
+- Locked Class Mode: ${cfg.grade} (${cfg.titleLabel})
+
+STEP 1: UPLOAD TO GITHUB
+1. Create a GitHub repository in your target GitHub account.
+2. Upload all files from this ZIP to the repository (extract first, then push/upload).
+
+STEP 2: DEPLOY FREE ON VERCEL OR NETLIFY
+- Build Command: npm run build
+- Output Directory: dist
+- Install Command: npm install --legacy-peer-deps
+- Environment Variables to add in Vercel / Netlify Settings:
+  1) GEMINI_API_KEY = <your free Google AI Studio Gemini API key>
+  2) Optional override: VITE_APP_CLASS = "${cfg.grade}"
+
+STEP 3: CONNECT OWN FREE FIREBASE PROJECT (FOR INDEPENDENT FREE QUOTA)
+1. Create a free Firebase project (Spark Plan) at https://console.firebase.google.com
+2. Enable Authentication -> Google Sign-In.
+3. Add your new Vercel/Netlify custom domain inside:
+   Authentication -> Settings -> Authorized domains.
+4. Create a Cloud Firestore database and deploy the included "firestore.rules" file.
+5. Replace "firebase-applet-config.json" with your new Firebase project's web config
+   (set "firestoreDatabaseId": "(default)" unless using a named database).
+
+====================================================================
+اردو رہنمائی (URDU GUIDE)
+====================================================================
+یہ ZIP فائل خاص طور پر "${cfg.titleLabel}" کے لیے تیار کی گئی ہے۔
+1. اس کو اپنے علیحدہ GitHub اکاؤنٹ میں اپ لوڈ کریں۔
+2. Vercel یا Netlify پر فری Deploy کریں اور Environment Variables میں اپنا GEMINI_API_KEY شامل کریں۔
+3. مکمل الگ فری Firebase حد (50k Reads / 20k Writes روزانہ) کے لیے نیا فری Firebase پروجیکٹ بنائیں،
+   Google Login آن کریں، اپنا نیا ڈومین Authorized Domains میں ایڈ کریں، اور firebase-applet-config.json تبدیل کریں۔
+====================================================================
+`;
+}
+
+async function applyEditionOverridesToZip(zip: JSZip, cfg: EditionZipConfig) {
+  zip.file('DEPLOYMENT_GUIDE_URDU_ENGLISH.txt', buildDeploymentGuideText(cfg));
+  if (cfg.grade === 'All') return;
+
+  const editionFile = zip.file('src/config/appEdition.ts');
+  if (editionFile) {
+    const content = await editionFile.async('string');
+    const updated = content.replace(
+      /export const BUILD_LOCKED_CLASS: EditionClass = ['"][^'"]+['"];/,
+      `export const BUILD_LOCKED_CLASS: EditionClass = '${cfg.grade}';`,
+    );
+    zip.file('src/config/appEdition.ts', updated);
+  }
+
+  const indexFile = zip.file('index.html');
+  if (indexFile) {
+    const html = await indexFile.async('string');
+    const title = `MeritExam — ${cfg.titleLabel} Examination Portal`;
+    const desc = `${cfg.titleLabel} Federal Board (FBISE / NBF) & Punjab Board (PTB) online examination portal covering all 20 Sciences, Compulsory, and Arts books.`;
+    const updatedHtml = html
+      .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
+      .replace(
+        /<meta\s+name="description"\s+content="[^"]*"\s*\/>/i,
+        `<meta name="description" content="${desc}" />`,
+      )
+      .replace(
+        /<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/i,
+        `<meta property="og:title" content="${title}" />`,
+      )
+      .replace(
+        /<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/i,
+        `<meta property="og:description" content="${desc}" />`,
+      );
+    zip.file('index.html', updatedHtml);
+  }
+
+  const metaFile = zip.file('metadata.json');
+  if (metaFile) {
+    try {
+      const meta = JSON.parse(await metaFile.async('string')) as Record<string, unknown>;
+      meta.name = `MeritExam — ${cfg.grade}`;
+      meta.description = `${cfg.titleLabel} Federal Board (FBISE / NBF) & Punjab Board (PTB) examination portal.`;
+      zip.file('metadata.json', JSON.stringify(meta, null, 2));
+    } catch {
+      // ignore if invalid JSON
+    }
+  }
+}
+
 const VALID_GRADES = ['9th', '10th', '1st A', '2nd Year'] as const;
 const VALID_SUBJECTS = [
   'Physics',
@@ -219,6 +352,19 @@ async function startServer() {
         ? Math.round(rawLongMarks * 100) / 100
         : 8;
 
+      const longMarksList: number[] = Array.isArray(body.longMarksList)
+        ? body.longMarksList
+            .map((v: unknown) => Number(v))
+            .filter((n: number) => Number.isFinite(n) && n >= 1 && n <= 25)
+            .map((n: number) => Math.round(n * 100) / 100)
+            .slice(0, longQuestionCount)
+        : [];
+
+      const rawFbiseExclusionClause =
+        typeof body.fbiseExclusionClause === 'string'
+          ? body.fbiseExclusionClause.trim().slice(0, 2600)
+          : '';
+
       if (!VALID_GRADES.includes(grade)) {
         res.status(400).json({ error: 'Invalid grade. Choose 9th, 10th, 1st A, or 2nd Year.' });
         return;
@@ -324,6 +470,16 @@ async function startServer() {
         ? 'STRICT SYLLABUS LOCK (PUNJAB BOARD PTB / PCTB / PECTAA ONLY): Use ONLY the official Punjab Curriculum and Textbook Board (PTB / PCTB / PECTAA) textbooks prescribed by Punjab BISE Boards (Lahore, Rawalpindi, Multan, Gujranwala, Faisalabad, Sargodha, Bahawalpur). Follow ONLY the Punjab Board unit sequence provided in syllabusChapters across Sciences (Physics, Chemistry, Biology, Math, Computer Science), Compulsory subjects (English, Urdu, Islamiat, Pakistan Studies), and Arts/Humanities. For 11th/1st Year English use Book I & Book III Plays/Poems; for 12th English use Book II & Goodbye Mr. Chips; for 10th Computer Science use C Language; for 9th Computer Science use Computer Science & Entrepreneurship; for 11th/12th Computer Science use PTB IT/Database & C Language. NEVER use Federal Board National Book Foundation (NBF) chapters.'
         : 'STRICT SYLLABUS LOCK (FEDERAL BOARD NBF ONLY): Use ONLY the new National Book Foundation (NBF / FBISE Islamabad) SLO-based textbook units. NEVER generate questions from Punjab Textbook Board (PTB / PCTB), Sindh Board, or old pre-SNC syllabi (for example, in 11th/1st Year English NEVER use "Button, Button", "Clearing in the Sky", "Dark They Were", "Responsibilities of Youth", "His First Flight", "Good Timber", or "Mr. Chips" — use ONLY the official NBF units like Family Values in Pakistan, Shooting Stars, The Wind, Butterflies, Clean Water and Sanitation, The Darkling Thrush, World Heritage Sites in Pakistan, Social Media, Sunshine After Rain, The Small Woman, The Three Questions, Break Break Break, Blow Blow Thou Winter Wind, Choice of a Profession, The Ninny, Fourteen, The Last Leaf).';
 
+      const fbiseCoreBaselineRule = !isPunjab
+        ? rawFbiseExclusionClause ||
+          'FBISE ASSESSMENT FRAMEWORK RULE: Include ONLY "Summative for Theory" (or "Summative for Theory and PBA") SLOs. Strictly EXCLUDE Formative-only topics, practical lab-only PBA skills (Domain N/G/X lab bench tasks, vernier calipers/screw gauge handling, titration practicals; in 9th Chemistry NEVER ask from Empirical Data Collection, Separation Techniques, Qualitative Analysis, or Chromatography unless explicitly selected), speaking/oral drills in English/Urdu, and separate Tarjuma-tul-Quran chapters in Islamiat.'
+        : '';
+
+      const longMarksDesc =
+        longMarksList.length > 0
+          ? `marks per question in order: [${longMarksList.join(', ')}] (match depth & sub-parts such as "(a) ... (b) ..." cleanly to each question's marks)`
+          : `${longMarks} marks each`;
+
       const sectionRequirements: string[] = [];
       if (questionCount > 0) {
         sectionRequirements.push(
@@ -346,12 +502,17 @@ async function startServer() {
       if (longQuestionCount > 0) {
         sectionRequirements.push(
           includeLongOr
-            ? `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question). For EVERY long question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
-            : `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
+            ? `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarksDesc}, detailed analytical, numerical, or essay question). For EVERY long question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
+            : `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarksDesc}, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
         );
       } else {
         sectionRequirements.push('- "longQuestions": Return an empty array [].');
       }
+
+      const fbiseMcqCognitiveRule =
+        !isPunjab && questionCount >= 10
+          ? 'FBISE 2026-27 MCQ COGNITIVE MIX: Make ~30% of Section-A MCQs stimulus, experimental/real-world scenario, data-interpretation, or conceptual application based, and ~70% crisp direct conceptual/numerical/factual textbook SLO MCQs.'
+          : '';
 
       const prompt = [
         `Create a structured assessment paper strictly aligned with the ${boardShortName} textbook curriculum:`,
@@ -371,7 +532,9 @@ async function startServer() {
         `3. ${languageRule}`,
         `4. ${subjectStyleRule}`,
         `5. ${boardLockRule}`,
-        ...(avoidClause ? [`6. ${avoidClause}`] : []),
+        ...(fbiseCoreBaselineRule ? [`6. ${fbiseCoreBaselineRule}`] : []),
+        ...(fbiseMcqCognitiveRule ? [`7. ${fbiseMcqCognitiveRule}`] : []),
+        ...(avoidClause ? [`8. ${avoidClause}`] : []),
       ].join('\n');
 
       const systemInstruction = isPunjab
@@ -625,15 +788,16 @@ async function startServer() {
         ? (parsed.longQuestions ?? [])
             .slice(0, longQuestionCount)
             .filter((q) => typeof q.prompt === 'string' && q.prompt.trim().length > 0)
-            .map((q) => {
+            .map((q, idx) => {
               const orPrompt = typeof q.orPrompt === 'string' ? q.orPrompt.trim().slice(0, 1200) : '';
               const orSuggestedAnswer = typeof q.orSuggestedAnswer === 'string'
                 ? q.orSuggestedAnswer.trim().slice(0, 2400)
                 : '';
+              const itemMarks = longMarksList[idx] ?? longMarks;
               return {
                 prompt: String(q.prompt).trim().slice(0, 1200),
                 suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to textbook detailed answer.').trim().slice(0, 2400),
-                marks: longMarks,
+                marks: itemMarks,
                 topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
                 ...(orPrompt ? { orPrompt } : {}),
                 ...(orPrompt && orSuggestedAnswer ? { orSuggestedAnswer } : {}),
@@ -675,8 +839,11 @@ async function startServer() {
         return;
       }
 
+      const cfg = resolveEditionZipConfig(req.query.class);
       const zip = new JSZip();
       addDirectoryToZip(zip, __dirname, __dirname);
+      await applyEditionOverridesToZip(zip, cfg);
+
       const buffer = await zip.generateAsync({
         type: 'nodebuffer',
         compression: 'DEFLATE',
@@ -684,7 +851,7 @@ async function startServer() {
       });
 
       res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename="meritexam-fbise-nbf.zip"');
+      res.setHeader('Content-Disposition', `attachment; filename="${cfg.zipFilename}"`);
       res.send(buffer);
     } catch (err) {
       console.error('Export ZIP error:', err);

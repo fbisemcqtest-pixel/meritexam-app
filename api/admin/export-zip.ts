@@ -119,6 +119,80 @@ function addDirectoryToZip(zip: JSZip, baseDir: string, currentDir: string) {
   }
 }
 
+interface EditionZipConfig {
+  grade: '9th' | '10th' | '1st A' | '2nd Year' | 'All';
+  titleLabel: string;
+  zipFilename: string;
+}
+
+function resolveEditionZipConfig(raw: unknown): EditionZipConfig {
+  const val = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (val === '9th' || val === '9') {
+    return { grade: '9th', titleLabel: '9th Class (SSC-I)', zipFilename: 'meritexam-9th-class.zip' };
+  }
+  if (val === '10th' || val === '10') {
+    return { grade: '10th', titleLabel: '10th Class (SSC-II)', zipFilename: 'meritexam-10th-class.zip' };
+  }
+  if (val === '1st-a' || val === '1st a' || val === '1st-year' || val === '11th') {
+    return { grade: '1st A', titleLabel: '1st Year / 11th (HSSC-I)', zipFilename: 'meritexam-1st-year.zip' };
+  }
+  if (val === '2nd-year' || val === '2nd year' || val === '12th') {
+    return { grade: '2nd Year', titleLabel: '2nd Year / 12th (HSSC-II)', zipFilename: 'meritexam-2nd-year.zip' };
+  }
+  return {
+    grade: 'All',
+    titleLabel: 'Complete All-Classes (9th, 10th, 1st A & 2nd Year)',
+    zipFilename: 'meritexam-complete-all-classes.zip',
+  };
+}
+
+async function applyEditionOverridesToZip(zip: JSZip, cfg: EditionZipConfig) {
+  zip.file(
+    'DEPLOYMENT_GUIDE_URDU_ENGLISH.txt',
+    `MERITEXAM DEPLOYMENT GUIDE — ${cfg.titleLabel}\nLocked Class Mode: ${cfg.grade}\n\n1. Upload to a GitHub repository.\n2. Deploy on Vercel or Netlify (Build: npm run build, Output: dist, Env: GEMINI_API_KEY).\n3. For independent free Firebase quota, replace firebase-applet-config.json with a new Firebase project, enable Google Sign-In, add your domain to Authorized Domains, and deploy firestore.rules.\n`,
+  );
+  if (cfg.grade === 'All') return;
+
+  const editionFile = zip.file('src/config/appEdition.ts');
+  if (editionFile) {
+    const content = await editionFile.async('string');
+    zip.file(
+      'src/config/appEdition.ts',
+      content.replace(
+        /export const BUILD_LOCKED_CLASS: EditionClass = ['"][^'"]+['"];/,
+        `export const BUILD_LOCKED_CLASS: EditionClass = '${cfg.grade}';`,
+      ),
+    );
+  }
+
+  const indexFile = zip.file('index.html');
+  if (indexFile) {
+    const html = await indexFile.async('string');
+    const title = `MeritExam — ${cfg.titleLabel} Examination Portal`;
+    const desc = `${cfg.titleLabel} Federal Board (FBISE / NBF) & Punjab Board (PTB) online examination portal.`;
+    zip.file(
+      'index.html',
+      html
+        .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
+        .replace(/<meta\s+name="description"\s+content="[^"]*"\s*\/>/i, `<meta name="description" content="${desc}" />`)
+        .replace(/<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/i, `<meta property="og:title" content="${title}" />`)
+        .replace(/<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/i, `<meta property="og:description" content="${desc}" />`),
+    );
+  }
+
+  const metaFile = zip.file('metadata.json');
+  if (metaFile) {
+    try {
+      const meta = JSON.parse(await metaFile.async('string')) as Record<string, unknown>;
+      meta.name = `MeritExam — ${cfg.grade}`;
+      meta.description = `${cfg.titleLabel} Federal Board (FBISE / NBF) & Punjab Board (PTB) examination portal.`;
+      zip.file('metadata.json', JSON.stringify(meta, null, 2));
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+}
+
 export default async function handler(req: IncomingMessage, res: ApiResponse) {
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -133,8 +207,13 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
       return;
     }
 
+    const reqUrl = new URL(req.url || '/api/admin/export-zip', 'http://localhost');
+    const cfg = resolveEditionZipConfig(reqUrl.searchParams.get('class'));
+
     const zip = new JSZip();
     addDirectoryToZip(zip, rootDir, rootDir);
+    await applyEditionOverridesToZip(zip, cfg);
+
     const buffer = await zip.generateAsync({
       type: 'nodebuffer',
       compression: 'DEFLATE',
@@ -142,7 +221,7 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
     });
 
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="meritexam-fbise-nbf.zip"');
+    res.setHeader('Content-Disposition', `attachment; filename="${cfg.zipFilename}"`);
     res.status(200).send(buffer);
   } catch (err) {
     console.error('Export ZIP error:', err);

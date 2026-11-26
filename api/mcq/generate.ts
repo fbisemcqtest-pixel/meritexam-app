@@ -129,6 +129,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       ? Math.round(rawLongMarks * 100) / 100
       : 8;
 
+    const longMarksList: number[] = Array.isArray(body.longMarksList)
+      ? body.longMarksList
+          .map((v: unknown) => Number(v))
+          .filter((n: number) => Number.isFinite(n) && n >= 1 && n <= 25)
+          .map((n: number) => Math.round(n * 100) / 100)
+          .slice(0, longQuestionCount)
+      : [];
+
+    const rawFbiseExclusionClause =
+      typeof body.fbiseExclusionClause === 'string'
+        ? body.fbiseExclusionClause.trim().slice(0, 2600)
+        : '';
+
     if (!VALID_GRADES.includes(grade)) {
       res.status(400).json({ error: 'Invalid grade. Choose 9th, 10th, 1st A, or 2nd Year.' });
       return;
@@ -228,6 +241,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       ? 'STRICT SYLLABUS LOCK (PUNJAB BOARD ONLY): Use ONLY the official Punjab Curriculum and Textbook Board (PTB / PCTB) textbooks used by Punjab Boards (BISE Lahore, Rawalpindi, Multan, Gujranwala, Faisalabad). For 11th/1st Year English use Book I (Button Button, Clearing in the Sky, Dark They Were, Thank You Mam, Piece of String, Reward, Use of Force, Gulistan of Sadi, Foolish Quack, Mild Attack of Locusts, I Have a Dream, Gift of the Magi, God Be Praised, Overcoat, Angel and the Author) & Book III Plays/Poems; for 12th English use Book II & Goodbye Mr. Chips. NEVER use Federal Board National Book Foundation (NBF) new chapters.'
       : 'STRICT SYLLABUS LOCK (FEDERAL BOARD NBF ONLY): Use ONLY the new National Book Foundation (NBF / FBISE Islamabad) SLO-based textbook units. NEVER generate questions from Punjab Textbook Board (PTB / PCTB), Sindh Board, or old pre-SNC syllabi (for example, in 11th/1st Year English NEVER use "Button, Button", "Clearing in the Sky", "Dark They Were", "Responsibilities of Youth", "His First Flight", "Good Timber", or "Mr. Chips" — use ONLY the official NBF units like Family Values in Pakistan, Shooting Stars, The Wind, Butterflies, Clean Water and Sanitation, The Darkling Thrush, World Heritage Sites in Pakistan, Social Media, Sunshine After Rain, The Small Woman, The Three Questions, Break Break Break, Blow Blow Thou Winter Wind, Choice of a Profession, The Ninny, Fourteen, The Last Leaf).';
 
+    const fbiseCoreBaselineRule = !isPunjab
+      ? rawFbiseExclusionClause ||
+        'FBISE ASSESSMENT FRAMEWORK RULE: Include ONLY "Summative for Theory" (or "Summative for Theory and PBA") SLOs. Strictly EXCLUDE Formative-only topics, practical lab-only PBA skills (Domain N/G/X lab bench tasks, vernier calipers/screw gauge handling, titration practicals; in 9th Chemistry NEVER ask from Empirical Data Collection, Separation Techniques, Qualitative Analysis, or Chromatography unless explicitly selected), speaking/oral drills in English/Urdu, and separate Tarjuma-tul-Quran chapters in Islamiat.'
+      : '';
+
+    const longMarksDesc =
+      longMarksList.length > 0
+        ? `marks per question in order: [${longMarksList.join(', ')}] (match depth & sub-parts such as "(a) ... (b) ..." cleanly to each question's marks)`
+        : `${longMarks} marks each`;
+
     const sectionRequirements: string[] = [];
     if (questionCount > 0) {
       sectionRequirements.push(
@@ -250,12 +273,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (longQuestionCount > 0) {
       sectionRequirements.push(
         includeLongOr
-          ? `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question). For EVERY long question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
-          : `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarks} marks each, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
+          ? `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarksDesc}, detailed analytical, numerical, or essay question). For EVERY long question, provide BOTH a primary "prompt" (with "suggestedAnswer") AND a distinct alternative "orPrompt" (with "orSuggestedAnswer") from the syllabus so students get an "OR" (ya yeh / ya woh) choice on each question, plus "topicTag".`
+          : `- "longQuestions": Generate exactly ${longQuestionCount} ${boardShortName} Board-standard Long / Descriptive Questions (${longMarksDesc}, detailed analytical, numerical, or essay question), with a clear "prompt", structured marking-points "suggestedAnswer", and "topicTag".`,
       );
     } else {
       sectionRequirements.push('- "longQuestions": Return an empty array [].');
     }
+
+    const fbiseMcqCognitiveRule =
+      !isPunjab && questionCount >= 10
+        ? 'FBISE 2026-27 MCQ COGNITIVE MIX: Make ~30% of Section-A MCQs stimulus, experimental/real-world scenario, data-interpretation, or conceptual application based, and ~70% crisp direct conceptual/numerical/factual textbook SLO MCQs.'
+        : '';
 
     const prompt = [
       `Create a structured assessment paper strictly aligned with the ${boardShortName} textbook curriculum:`,
@@ -275,9 +303,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       `3. ${languageRule}`,
       `4. ${subjectStyleRule}`,
       `5. ${boardLockRule}`,
+      ...(fbiseCoreBaselineRule ? [`6. ${fbiseCoreBaselineRule}`] : []),
+      ...(fbiseMcqCognitiveRule ? [`7. ${fbiseMcqCognitiveRule}`] : []),
       ...(Array.isArray(body.avoidPrompts) && body.avoidPrompts.length > 0
         ? [
-            `6. Do NOT repeat or paraphrase any of these already-generated questions: ${body.avoidPrompts
+            `8. Do NOT repeat or paraphrase any of these already-generated questions: ${body.avoidPrompts
               .filter((item: unknown): item is string => typeof item === 'string')
               .map((item: string) => item.trim().slice(0, 120))
               .filter(Boolean)
@@ -538,15 +568,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       ? (parsed.longQuestions ?? [])
           .slice(0, longQuestionCount)
           .filter((q) => typeof q.prompt === 'string' && q.prompt.trim().length > 0)
-          .map((q) => {
+          .map((q, idx) => {
             const orPrompt = typeof q.orPrompt === 'string' ? q.orPrompt.trim().slice(0, 1200) : '';
             const orSuggestedAnswer = typeof q.orSuggestedAnswer === 'string'
               ? q.orSuggestedAnswer.trim().slice(0, 2400)
               : '';
+            const itemMarks = longMarksList[idx] ?? longMarks;
             return {
               prompt: String(q.prompt).trim().slice(0, 1200),
               suggestedAnswer: String(q.suggestedAnswer ?? 'Refer to textbook detailed answer.').trim().slice(0, 2400),
-              marks: longMarks,
+              marks: itemMarks,
               topicTag: String(q.topicTag ?? subject).trim().slice(0, 80),
               ...(orPrompt ? { orPrompt } : {}),
               ...(orPrompt && orSuggestedAnswer ? { orSuggestedAnswer } : {}),

@@ -5,13 +5,23 @@ import { PortalGateway } from './components/PortalGateway';
 import { RoleAuthPortal } from './components/RoleAuthPortal';
 import { StudentDashboard } from './components/StudentDashboard';
 import { TeacherDashboard } from './components/TeacherDashboard';
-import { UserRole } from './types';
+import { getActiveEditionClass } from './config/appEdition';
+import { GRADE_LABELS, UserRole } from './types';
 
 function AppContent() {
   const { authReady, firebaseUser, userProfile, profileLoaded, isAdmin, ensureBootstrappedAdmin } =
     useAuth();
   const [selectedPortal, setSelectedPortal] = useState<UserRole | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const activeEdition = getActiveEditionClass();
+
+  useEffect(() => {
+    if (activeEdition === 'All') {
+      document.title = 'MeritExam — Academic MCQ Examination Portal';
+    } else {
+      document.title = `MeritExam — ${GRADE_LABELS[activeEdition]} Examination Portal`;
+    }
+  }, [activeEdition]);
 
   useEffect(() => {
     if (firebaseUser && isAdmin && (selectedPortal === 'admin' || selectedPortal === null)) {

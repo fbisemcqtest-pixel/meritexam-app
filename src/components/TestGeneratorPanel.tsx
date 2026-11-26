@@ -19,6 +19,7 @@ import {
   TestDeliveryOverride,
   getSyllabusChapters,
 } from '../types';
+import { getActiveEditionClass } from '../config/appEdition';
 import { generateMCQsFromServer, publishMCQTest } from '../services/mcqService';
 import {
   FBISE_PATTERN_MODES,
@@ -26,6 +27,12 @@ import {
   formatDurationHoursMin,
   getOfficialPattern,
 } from '../data/fbisePatterns';
+import {
+  buildFbiseExclusionPromptBlock,
+  getFbiseExclusionProfile,
+  getSummativeFbiseChapters,
+  isFbiseExcludedChapter,
+} from '../data/fbiseExclusions';
 import { PrintablePaperModal } from './PrintablePaperModal';
 
 interface TestGeneratorPanelProps {
@@ -34,6 +41,7 @@ interface TestGeneratorPanelProps {
   creatorRole: 'teacher' | 'admin';
   defaultSubject?: SubjectName | 'All';
   defaultGrade?: GradeLevel | 'All';
+  lockedGrade?: GradeLevel;
   systemSettings: SystemSettings;
   onPublished?: () => void;
 }
@@ -44,17 +52,24 @@ export function TestGeneratorPanel({
   creatorRole,
   defaultSubject,
   defaultGrade,
+  lockedGrade,
   systemSettings,
   onPublished,
 }: TestGeneratorPanelProps) {
+  const activeEdition = getActiveEditionClass();
+  const effectiveLockedGrade: GradeLevel | undefined =
+    lockedGrade ?? (activeEdition !== 'All' ? activeEdition : undefined);
   const initialGrade: GradeLevel =
-    defaultGrade && defaultGrade !== 'All' ? defaultGrade : '9th';
+    effectiveLockedGrade ?? (defaultGrade && defaultGrade !== 'All' ? defaultGrade : '9th');
   const initialSubject: SubjectName =
     defaultSubject && defaultSubject !== 'All' ? defaultSubject : 'Physics';
-  const initialPattern = getOfficialPattern('fbise_nbf', initialGrade, initialSubject, 'official_new');
+  const initialPattern = getOfficialPattern('fbise_nbf', initialGrade, initialSubject, 'reformed_50_50');
 
   const [board, setBoard] = useState<ExamBoard>('fbise_nbf');
-  const [patternMode, setPatternMode] = useState<FbisePatternMode>('official_new');
+  const [patternMode, setPatternMode] = useState<FbisePatternMode>('reformed_50_50');
+  const [paperHeaderStyle, setPaperHeaderStyle] = useState<
+    'fbise_official' | 'apsacs_official' | 'standard'
+  >('fbise_official');
   const [schoolName, setSchoolName] = useState('');
   const [examLabel, setExamLabel] = useState('');
   const examLabelInputRef = useRef<HTMLInputElement | null>(null);
@@ -74,6 +89,10 @@ export function TestGeneratorPanel({
   const [marksPerQuestion, setMarksPerQuestion] = useState<number>(initialPattern.mcqMarks);
   const [marksPerShort, setMarksPerShort] = useState<number>(initialPattern.shortMarks);
   const [marksPerLong, setMarksPerLong] = useState<number>(initialPattern.longMarks);
+  const [longMarksList, setLongMarksList] = useState<number[] | undefined>(
+    initialPattern.longMarksList,
+  );
+  const [includePbaChapters, setIncludePbaChapters] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState<number>(initialPattern.totalTimeMinutes);
   const [sectionATimeMinutes, setSectionATimeMinutes] = useState<number>(
     initialPattern.sectionATimeMinutes,
@@ -112,6 +131,7 @@ export function TestGeneratorPanel({
     setShortChoiceNote(p.shortChoiceNote);
     setLongQuestionCount(p.longCount);
     setMarksPerLong(p.longMarks);
+    setLongMarksList(p.longMarksList);
     setIncludeLongOr(p.longHasOr);
     setLongChoiceNote(p.longChoiceNote);
     setDurationMinutes(p.totalTimeMinutes);
@@ -121,15 +141,29 @@ export function TestGeneratorPanel({
   }
 
   const chaptersForSelection = getSyllabusChapters(board, grade, subject);
+  const exclusionProfile = board === 'fbise_nbf' ? getFbiseExclusionProfile(grade, subject) : null;
+  const summativeChapters = getSummativeFbiseChapters(board, grade, subject, chaptersForSelection);
+  const excludedWholeChapterCount = chaptersForSelection.length - summativeChapters.length;
+  const visibleChapters =
+    board === 'fbise_nbf' && !includePbaChapters && excludedWholeChapterCount > 0
+      ? summativeChapters
+      : chaptersForSelection;
+
   const activeBoardMeta = EXAM_BOARDS.find((b) => b.value === board) ?? EXAM_BOARDS[0];
   const hasAnyPaperContent =
     questions.length > 0 || shortQuestions.length > 0 || longQuestions.length > 0;
+
+  const activeLongMarksList =
+    longMarksList && longMarksList.length === longQuestionCount ? longMarksList : undefined;
+  const plannedLongTotalMarks = activeLongMarksList
+    ? activeLongMarksList.reduce((acc, m) => acc + m, 0)
+    : longQuestionCount * marksPerLong;
 
   const plannedTotalMarks =
     Math.round(
       (questionCount * marksPerQuestion +
         shortQuestionCount * marksPerShort +
-        longQuestionCount * marksPerLong) *
+        plannedLongTotalMarks) *
         100,
     ) / 100;
 
@@ -142,6 +176,11 @@ export function TestGeneratorPanel({
       return;
     }
 
+    const fbiseExclusionClause =
+      board === 'fbise_nbf'
+        ? buildFbiseExclusionPromptBlock(board, grade, subject, selectedChapters)
+        : undefined;
+
     setGenerating(true);
     setGenerationProgress(null);
     try {
@@ -152,7 +191,7 @@ export function TestGeneratorPanel({
           subject,
           topic: topic.trim(),
           selectedChapters: selectedChapters.length > 0 ? selectedChapters : undefined,
-          syllabusChapters: chaptersForSelection,
+          syllabusChapters: visibleChapters,
           difficulty,
           questionCount,
           shortQuestionCount,
@@ -161,6 +200,8 @@ export function TestGeneratorPanel({
           includeLongOr,
           shortMarks: marksPerShort,
           longMarks: marksPerLong,
+          ...(activeLongMarksList ? { longMarksList: activeLongMarksList } : {}),
+          ...(fbiseExclusionClause ? { fbiseExclusionClause } : {}),
         },
         (done, total, stageLabel) => {
           if (stageLabel) {
@@ -173,7 +214,14 @@ export function TestGeneratorPanel({
       setTitle(res.title);
       setQuestions(res.questions);
       setShortQuestions(res.shortQuestions);
-      setLongQuestions(res.longQuestions);
+      setLongQuestions(
+        activeLongMarksList
+          ? res.longQuestions.map((lq, i) => ({
+              ...lq,
+              marks: activeLongMarksList[i] ?? lq.marks,
+            }))
+          : res.longQuestions,
+      );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to generate paper.');
     } finally {
@@ -335,10 +383,15 @@ export function TestGeneratorPanel({
 
     setPublishing(true);
     try {
+      const effectiveSchoolName =
+        schoolName.trim() ||
+        (paperHeaderStyle === 'apsacs_official'
+          ? 'Army Public Schools & Colleges System'
+          : '');
       await publishMCQTest({
         title: title.trim() || `${grade} ${subject} Assessment`,
         board,
-        schoolName: schoolName.trim(),
+        schoolName: effectiveSchoolName,
         examLabel: examLabel.trim(),
         paperDate: paperDate.trim(),
         grade,
@@ -454,6 +507,10 @@ export function TestGeneratorPanel({
                     setBoard(b.value);
                     setSelectedChapters([]);
                     setTopic('');
+                    setPaperHeaderStyle((prev) => {
+                      if (prev === 'apsacs_official') return prev;
+                      return b.value === 'fbise_nbf' ? 'fbise_official' : 'standard';
+                    });
                     applyPatternToForm(b.value, grade, subject, patternMode);
                   }}
                   className={`text-left px-4 py-3 rounded-lg border transition-colors cursor-pointer flex items-center justify-between gap-3 ${
@@ -479,19 +536,19 @@ export function TestGeneratorPanel({
           </div>
         </div>
 
-        {/* Official Federal Board (FBISE) Pattern Selector + Auto-Synced Breakdown */}
+        {/* Official Federal Board (FBISE / APSACS Unified) Pattern Selector + Auto-Synced Breakdown */}
         <div className="mb-5 p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="text-xs font-bold text-slate-900">
                 {board === 'punjab_ptb'
                   ? 'Punjab Board (PTB / PCTB) Pattern Track (Auto-Applied on Class / Subject Change)'
-                  : 'Official Board Pattern Track (Auto-Applied on Class / Subject Change)'}
+                  : 'Official FBISE / APSACS Pattern Track (Same Marks & Sections for Both)'}
               </span>
               <span className="ml-2 text-[11px] text-slate-500">
                 {board === 'punjab_ptb'
                   ? 'Punjab BISE / PCTB Textbook Alignment'
-                  : 'Verified from fbise.edu.pk (SSC-I/II & HSSC-I/II)'}
+                  : 'Verified from fbise.edu.pk — APSACS uses the exact same FBISE pattern (only first-page logo/header changes below)'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -538,7 +595,7 @@ export function TestGeneratorPanel({
                       isActive ? 'text-blue-100' : 'text-slate-500'
                     }`}
                   >
-                    Sec-A: {previewPattern.mcqCount}×{previewPattern.mcqMarks} · Sec-B: {previewPattern.shortCount}×{previewPattern.shortMarks} · Sec-C: {previewPattern.longCount}×{previewPattern.longMarks}
+                    Sec-A: {previewPattern.mcqCount}×{previewPattern.mcqMarks} · Sec-B: {previewPattern.shortCount}×{previewPattern.shortMarks} · Sec-C: {previewPattern.longMarksList ? previewPattern.longMarksList.join('+') : `${previewPattern.longCount}×${previewPattern.longMarks}`}
                   </div>
                 </button>
               );
@@ -563,7 +620,10 @@ export function TestGeneratorPanel({
                 Section-C (Q.3{activeOfficialPattern.longCount > 1 ? `–Q.${2 + activeOfficialPattern.longCount}` : ''})
               </div>
               <div className="font-bold text-slate-900 tabular-nums">
-                {activeOfficialPattern.longCount} × {activeOfficialPattern.longMarks} = {activeOfficialPattern.sectionCMarks} Marks (with OR)
+                {activeOfficialPattern.longMarksList
+                  ? `${activeOfficialPattern.longMarksList.join('+')} = ${activeOfficialPattern.sectionCMarks} Marks`
+                  : `${activeOfficialPattern.longCount} × ${activeOfficialPattern.longMarks} = ${activeOfficialPattern.sectionCMarks} Marks`}{' '}
+                (with OR)
               </div>
             </div>
             <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5">
@@ -581,8 +641,10 @@ export function TestGeneratorPanel({
               Class / Grade
             </label>
             <select
-              value={grade}
+              value={effectiveLockedGrade ?? grade}
+              disabled={Boolean(effectiveLockedGrade)}
               onChange={(e) => {
+                if (effectiveLockedGrade) return;
                 const nextGrade = e.target.value as GradeLevel;
                 setGrade(nextGrade);
                 setAllowedGrades([nextGrade]);
@@ -590,9 +652,9 @@ export function TestGeneratorPanel({
                 setTopic('');
                 applyPatternToForm(board, nextGrade, subject, patternMode);
               }}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-700"
             >
-              {GRADES.map((g) => (
+              {(effectiveLockedGrade ? [effectiveLockedGrade] : GRADES).map((g) => (
                 <option key={g} value={g}>
                   {GRADE_LABELS[g]}
                 </option>
@@ -698,21 +760,63 @@ export function TestGeneratorPanel({
               onChange={(e) => {
                 if (e.target.value === '') {
                   setLongQuestionCount(0);
+                  setLongMarksList(undefined);
                   return;
                 }
                 const val = Number(e.target.value);
                 setLongQuestionCount(Number.isNaN(val) ? 0 : Math.min(25, Math.max(0, Math.floor(val))));
+                setLongMarksList(undefined);
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
             />
           </div>
         </div>
 
+        {/* Official FBISE Assessment Framework Compliance Notice */}
+        {board === 'fbise_nbf' && exclusionProfile && (
+          <div className="mb-5 p-3 rounded-lg bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-950 space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-emerald-900">
+                FBISE Official Assessment Framework Active ({grade} {subject})
+              </div>
+              {excludedWholeChapterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !includePbaChapters;
+                    setIncludePbaChapters(nextVal);
+                    if (!nextVal) {
+                      setSelectedChapters((prev) =>
+                        prev.filter((ch) => !isFbiseExcludedChapter(board, grade, subject, ch)),
+                      );
+                    }
+                  }}
+                  className="text-[11px] font-semibold text-emerald-800 bg-white hover:bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                >
+                  {includePbaChapters
+                    ? `Hide ${excludedWholeChapterCount} Lab/PBA-Only Units`
+                    : `Show ${excludedWholeChapterCount} Lab/PBA-Only Units`}
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-emerald-900 leading-relaxed">
+              Only <strong>Summative for Written Theory</strong> SLOs are included. Formative &amp; Practical-Only (PBA / Domain N/G/X) topics are automatically excluded from generated MCQs &amp; subjective questions.
+              {excludedWholeChapterCount > 0 && !includePbaChapters && (
+                <span>
+                  {' '}
+                  Excluded non-exam units hidden from theory list:{' '}
+                  <strong>{exclusionProfile.excludedWholeChapters.join(', ')}</strong>.
+                </span>
+              )}
+            </p>
+          </div>
+        )}
+
         {/* Multi-Chapter Selector */}
         <div className="mb-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <label className="text-xs font-semibold text-slate-700">
-              {activeBoardMeta.shortLabel} · {grade} {subject} Chapters ({board === 'punjab_ptb' ? 'PTB / PCTB Textbook Units' : 'NBF Textbook Units'} — click to select)
+              {activeBoardMeta.shortLabel} · {grade} {subject} Chapters ({board === 'punjab_ptb' ? 'PTB / PCTB Textbook Units' : 'NBF Written Theory Units'} — click to select)
               {selectedChapters.length > 0 && (
                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold tabular-nums">
                   {selectedChapters.length} Selected
@@ -720,12 +824,16 @@ export function TestGeneratorPanel({
               )}
             </label>
             <div className="flex items-center gap-3">
-              {selectedChapters.length < chaptersForSelection.length && (
+              {selectedChapters.length < visibleChapters.length && (
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedChapters([...chaptersForSelection]);
-                    setTopic(`All ${chaptersForSelection.length} Chapters (Full Book)`);
+                    setSelectedChapters([...visibleChapters]);
+                    setTopic(
+                      excludedWholeChapterCount > 0 && !includePbaChapters
+                        ? `All ${visibleChapters.length} Summative Theory Chapters`
+                        : `All ${visibleChapters.length} Chapters (Full Book)`,
+                    );
                   }}
                   className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
                 >
@@ -747,8 +855,10 @@ export function TestGeneratorPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {chaptersForSelection.map((ch, idx) => {
+            {visibleChapters.map((ch) => {
+              const originalIdx = chaptersForSelection.indexOf(ch);
               const selected = selectedChapters.includes(ch);
+              const isPbaOnlyUnit = isFbiseExcludedChapter(board, grade, subject, ch);
               return (
                 <button
                   key={ch}
@@ -757,14 +867,18 @@ export function TestGeneratorPanel({
                     const isAlreadySelected = selectedChapters.includes(ch);
                     const nextSelected = isAlreadySelected
                       ? selectedChapters.filter((item) => item !== ch)
-                      : chaptersForSelection.filter(
+                      : visibleChapters.filter(
                           (item) => item === ch || selectedChapters.includes(item),
                         );
                     setSelectedChapters(nextSelected);
                     if (nextSelected.length === 0) {
                       setTopic('');
-                    } else if (nextSelected.length === chaptersForSelection.length) {
-                      setTopic(`All ${chaptersForSelection.length} Chapters (Full Book)`);
+                    } else if (nextSelected.length === visibleChapters.length) {
+                      setTopic(
+                        excludedWholeChapterCount > 0 && !includePbaChapters
+                          ? `All ${visibleChapters.length} Summative Theory Chapters`
+                          : `All ${visibleChapters.length} Chapters (Full Book)`,
+                      );
                     } else {
                       const formatted = nextSelected
                         .map((item) => `Ch ${chaptersForSelection.indexOf(item) + 1}: ${item}`)
@@ -784,12 +898,15 @@ export function TestGeneratorPanel({
                   className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer inline-flex items-center gap-1 ${
                     selected
                       ? 'bg-blue-700 border-blue-700 text-white shadow-xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      : isPbaOnlyUnit
+                        ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
                   {selected && <Check className="w-3 h-3 shrink-0" />}
                   <span>
-                    Ch {idx + 1}: {ch}
+                    Ch {originalIdx + 1}: {ch}
+                    {isPbaOnlyUnit ? ' (PBA/Formative)' : ''}
                   </span>
                 </button>
               );
@@ -821,7 +938,8 @@ export function TestGeneratorPanel({
               onChange={(e) => setMarksPerQuestion(Number(e.target.value))}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
             >
-              <option value={0.5}>0.5 Marks / MCQ</option>
+              <option value={0.5}>0.5 Mark / MCQ</option>
+              <option value={0.75}>0.75 Mark / MCQ</option>
               <option value={1}>1 Mark / MCQ</option>
               <option value={1.5}>1.5 Marks / MCQ</option>
               <option value={2}>2 Marks / MCQ</option>
@@ -890,11 +1008,18 @@ export function TestGeneratorPanel({
               <div className="space-y-2.5">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Marks per Long Question ({longQuestionCount} × {marksPerLong} = {longQuestionCount * marksPerLong} Marks)
+                    Marks per Long Question (
+                    {activeLongMarksList
+                      ? `${activeLongMarksList.join(' + ')} = ${plannedLongTotalMarks} Marks`
+                      : `${longQuestionCount} × ${marksPerLong} = ${plannedLongTotalMarks} Marks`}
+                    )
                   </label>
                   <select
                     value={marksPerLong}
-                    onChange={(e) => setMarksPerLong(Number(e.target.value))}
+                    onChange={(e) => {
+                      setMarksPerLong(Number(e.target.value));
+                      setLongMarksList(undefined);
+                    }}
                     className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
                   >
                     <option value={5}>5 Marks / Long Q</option>
@@ -932,24 +1057,78 @@ export function TestGeneratorPanel({
           </div>
         )}
 
-        {/* Paper Header Metadata (School Name, Exam Term/Type, Paper Date) */}
+        {/* Paper Header Metadata (First-Page Logo Style, School Name, Exam Term/Type, Paper Date) */}
         <div className="mb-5 pt-4 border-t border-slate-100 space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="block text-xs font-semibold text-slate-700">
-              Paper Header Details (School Name, Term / Exam Type & Date — Printed on Paper)
+              First-Page Logo / Header Style &amp; Details (Same Pattern — Only Header / Logo Changes)
             </label>
+            <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperHeaderStyle('fbise_official');
+                  if (examLabel === 'Pre-Board Examination (Cold & Warm Region)') {
+                    setExamLabel('');
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                  paperHeaderStyle === 'fbise_official'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                FBISE Official Header
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperHeaderStyle('apsacs_official');
+                  if (!examLabel.trim()) {
+                    setExamLabel('Pre-Board Examination (Cold & Warm Region)');
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                  paperHeaderStyle === 'apsacs_official'
+                    ? 'bg-emerald-900 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                APSACS Monogram &amp; First Page
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperHeaderStyle('standard');
+                  if (examLabel === 'Pre-Board Examination (Cold & Warm Region)') {
+                    setExamLabel('');
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                  paperHeaderStyle === 'standard'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Standard School Header
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                School / Academy Name
+                {paperHeaderStyle === 'apsacs_official' ? 'APSACS Campus / System Name' : 'School / Academy Name'}
               </label>
               <input
                 type="text"
                 maxLength={140}
                 value={schoolName}
                 onChange={(e) => setSchoolName(e.target.value)}
-                placeholder="e.g. City Grammar High School"
+                placeholder={
+                  paperHeaderStyle === 'apsacs_official'
+                    ? 'Army Public Schools & Colleges System'
+                    : 'e.g. City Grammar High School'
+                }
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
@@ -1077,13 +1256,15 @@ export function TestGeneratorPanel({
                 <span className="text-[11px] font-semibold text-slate-700 mr-1">
                   Permitted Classes:
                 </span>
-                {GRADES.map((g) => {
-                  const checked = allowedGrades.includes(g);
+                {(effectiveLockedGrade ? [effectiveLockedGrade] : GRADES).map((g) => {
+                  const checked = effectiveLockedGrade ? g === effectiveLockedGrade : allowedGrades.includes(g);
                   return (
                     <button
                       key={g}
                       type="button"
+                      disabled={Boolean(effectiveLockedGrade)}
                       onClick={() => {
+                        if (effectiveLockedGrade) return;
                         setAllowedGrades((prev) => {
                           if (prev.includes(g)) {
                             return prev.length > 1 ? prev.filter((item) => item !== g) : prev;
@@ -1091,7 +1272,7 @@ export function TestGeneratorPanel({
                           return [...prev, g];
                         });
                       }}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-md border cursor-pointer transition-colors inline-flex items-center gap-1 ${
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md border cursor-pointer disabled:cursor-default transition-colors inline-flex items-center gap-1 ${
                         checked
                           ? 'bg-blue-700 border-blue-700 text-white'
                           : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
@@ -1197,7 +1378,7 @@ export function TestGeneratorPanel({
               <p className="text-[11px] text-slate-500 mt-1">
                 {scheduledEndAt
                   ? `Auto-hides from students after ${new Date(scheduledEndAt).toLocaleString()}.`
-                  : 'Optional: set a closing time so expired papers vanish automatically.'}
+                  : 'If left blank: scheduled papers auto-close after Start + Duration, and immediate papers auto-close after 12 hours.'}
               </p>
             </div>
 
@@ -1669,6 +1850,7 @@ export function TestGeneratorPanel({
           longQuestions={longQuestions}
           shortChoiceNote={shortChoiceNote.trim()}
           longChoiceNote={longChoiceNote.trim()}
+          defaultPaperStyle={paperHeaderStyle}
           onClose={() => setShowPrintModal(false)}
         />
       )}

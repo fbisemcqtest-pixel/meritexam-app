@@ -13,6 +13,11 @@ import {
   UserCheck,
 } from 'lucide-react';
 import {
+  CLASS_EDITIONS,
+  getActiveEditionClass,
+  isBuildLockedEdition,
+} from '../config/appEdition';
+import {
   CURRICULUM_BOARD_LABEL,
   GRADES,
   GRADE_LABELS,
@@ -96,20 +101,31 @@ function SubjectIcon({ subject, className }: { subject: SubjectName; className?:
 export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
   const [heroImageError, setHeroImageError] = useState(false);
   const [subjectImgErrors, setSubjectImgErrors] = useState<Record<string, boolean>>({});
+  const activeEdition = getActiveEditionClass();
+  const buildLocked = isBuildLockedEdition();
+  const isSingleClassEdition = activeEdition !== 'All';
+  const visibleGrades = isSingleClassEdition ? [activeEdition] : GRADES;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       {/* Top Chromatic Academic Bar + 3-Zone Header */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="h-1 w-full bg-gradient-to-r from-blue-600 via-teal-500 to-amber-500" />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-6">
-          <a
-            href="#top"
-            className="font-display text-lg sm:text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2"
-          >
-            <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-blue-600 to-teal-500 shrink-0" />
-            <span>MeritExam</span>
-          </a>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-4 sm:gap-6">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <a
+              href="#top"
+              className="font-display text-lg sm:text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2"
+            >
+              <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-blue-600 to-teal-500 shrink-0" />
+              <span>MeritExam</span>
+            </a>
+            {isSingleClassEdition && (
+              <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded whitespace-nowrap">
+                {GRADE_LABELS[activeEdition]}
+              </span>
+            )}
+          </div>
 
           <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600">
             <a href="#subjects" className="hover:text-blue-700 transition-colors whitespace-nowrap shrink-0">
@@ -137,7 +153,15 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
             </button>
           </nav>
 
-          <div className="shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            {isSingleClassEdition && !buildLocked && (
+              <a
+                href="/"
+                className="px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg whitespace-nowrap transition-colors"
+              >
+                All Classes
+              </a>
+            )}
             <button
               type="button"
               onClick={() => onSelectPortal('admin', 'login')}
@@ -156,24 +180,43 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
               <div className="lg:col-span-6 flex flex-col justify-center">
                 <p className="text-xs font-bold tracking-wide uppercase text-blue-700 mb-3">
-                  {CURRICULUM_BOARD_LABEL}
+                  {isSingleClassEdition
+                    ? `${GRADE_LABELS[activeEdition]} · ${CURRICULUM_BOARD_LABEL}`
+                    : CURRICULUM_BOARD_LABEL}
                 </p>
                 <h1
                   className="font-display text-3xl sm:text-5xl font-bold tracking-tight text-slate-900 leading-[1.12] mb-5"
                   style={{ textWrap: 'balance' }}
                 >
-                  Subject-driven{' '}
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-700 via-indigo-700 to-teal-600">
-                    MCQ examinations
-                  </span>{' '}
-                  with verified academic governance
+                  {isSingleClassEdition ? (
+                    <>
+                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-700 via-indigo-700 to-teal-600">
+                        {GRADE_LABELS[activeEdition]}
+                      </span>{' '}
+                      board examination portal
+                    </>
+                  ) : (
+                    <>
+                      Subject-driven{' '}
+                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-700 via-indigo-700 to-teal-600">
+                        MCQ examinations
+                      </span>{' '}
+                      with verified academic governance
+                    </>
+                  )}
                 </h1>
                 <p className="text-base text-slate-600 leading-relaxed max-w-xl mb-7">
-                  Select any class level (9th, 10th, 1st A, or 2nd Year) and any National Book Foundation
-                  book—<strong>Sciences</strong> (Physics, Chemistry, Biology, Math, Computer Science),{' '}
-                  <strong>Compulsory</strong> (English, Urdu, Islamiat, Pakistan Studies), or{' '}
-                  <strong>Arts &amp; Humanities</strong> (Civics, Economics, Education, History, Geography,
-                  Sociology, Psychology, General Science &amp; General Math).
+                  {isSingleClassEdition
+                    ? `Dedicated ${GRADE_LABELS[activeEdition]} examination system covering all 20 National Book Foundation (FBISE) and Punjab Textbook Board (PTB) books—Sciences, Compulsory, and Arts & Humanities.`
+                    : (
+                      <>
+                        Select any class level (9th, 10th, 1st A, or 2nd Year) and any National Book Foundation
+                        book—<strong>Sciences</strong> (Physics, Chemistry, Biology, Math, Computer Science),{' '}
+                        <strong>Compulsory</strong> (English, Urdu, Islamiat, Pakistan Studies), or{' '}
+                        <strong>Arts &amp; Humanities</strong> (Civics, Economics, Education, History, Geography,
+                        Sociology, Psychology, General Science &amp; General Math).
+                      </>
+                    )}
                 </p>
 
                 <div className="flex flex-wrap items-center gap-3 mb-7">
@@ -182,7 +225,7 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                     onClick={() => onSelectPortal('student', 'register')}
                     className="px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 rounded-lg shadow-sm transition-all inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    Student Registration
+                    {isSingleClassEdition ? `${activeEdition} Student Registration` : 'Student Registration'}
                     <ArrowRight className="w-4 h-4" />
                   </button>
                   <button
@@ -195,7 +238,11 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600">
-                  <span className="font-medium text-blue-800">9th · 10th · 1st A · 2nd Year</span>
+                  <span className="font-medium text-blue-800">
+                    {isSingleClassEdition
+                      ? `${GRADE_LABELS[activeEdition]} Only`
+                      : '9th · 10th · 1st A · 2nd Year'}
+                  </span>
                   <span aria-hidden="true" className="text-slate-300">·</span>
                   <span className="font-medium text-teal-800">Admin Account Verification</span>
                   <span aria-hidden="true" className="text-slate-300">·</span>
@@ -247,11 +294,14 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                   Board-Aligned Science & Math Tracks
                 </p>
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-                  Federal (NBF) &amp; Punjab (PTB) Subjects Across All 4 Classes
+                  {isSingleClassEdition
+                    ? `Federal (NBF) & Punjab (PTB) Subjects for ${GRADE_LABELS[activeEdition]}`
+                    : 'Federal (NBF) & Punjab (PTB) Subjects Across All 4 Classes'}
                 </h2>
                 <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                  Every chapter from 9th, 10th, 1st A (11th), and 2nd Year (12th) National Book
-                  Foundation (FBISE) and Punjab Textbook Board (PTB / PCTB) books is mapped for instant paper creation.
+                  {isSingleClassEdition
+                    ? `Every chapter from ${GRADE_LABELS[activeEdition]} National Book Foundation (FBISE) and Punjab Textbook Board (PTB / PCTB) books is mapped for instant paper creation.`
+                    : 'Every chapter from 9th, 10th, 1st A (11th), and 2nd Year (12th) National Book Foundation (FBISE) and Punjab Textbook Board (PTB / PCTB) books is mapped for instant paper creation.'}
                 </p>
               </div>
               <div className="text-xs text-slate-500 font-medium">
@@ -264,7 +314,7 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {SUBJECT_SHOWCASE.map((item) => {
-                const totalChapters = GRADES.reduce(
+                const totalChapters = visibleGrades.reduce(
                   (acc, g) => acc + (SYLLABUS_CHAPTERS[g][item.subject]?.length ?? 0),
                   0,
                 );
@@ -315,7 +365,7 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                             <SubjectIcon subject={item.subject} className="w-4 h-4" />
                           </div>
                           <span className={`text-xs font-bold uppercase tracking-wide ${item.accentText}`}>
-                            9th · 10th · 1st A · 2nd Year
+                            {isSingleClassEdition ? GRADE_LABELS[activeEdition] : '9th · 10th · 1st A · 2nd Year'}
                           </span>
                         </div>
                         <p className="text-xs text-slate-600 leading-relaxed">{item.tagline}</p>
@@ -414,8 +464,9 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                       Student Portal
                     </h3>
                     <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                      Register with your class level (9th, 10th, 1st A, or 2nd Year) and roll number.
-                      Once approved by the admin, sit timed MCQ tests and view released scorecards.
+                      {isSingleClassEdition
+                        ? `Register with your ${GRADE_LABELS[activeEdition]} roll number. Once approved by the admin, sit timed MCQ tests and view released scorecards.`
+                        : 'Register with your class level (9th, 10th, 1st A, or 2nd Year) and roll number. Once approved by the admin, sit timed MCQ tests and view released scorecards.'}
                     </p>
                   </div>
                   <div className="mt-6 pt-5 border-t border-slate-100 flex items-center gap-3">
@@ -526,7 +577,7 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm">
-                      {GRADES.map((grade) => (
+                      {visibleGrades.map((grade) => (
                         <tr key={grade} className="hover:bg-blue-50/40 transition-colors">
                           <td className="py-3.5 px-4 font-semibold text-slate-900">
                             {GRADE_LABELS[grade]}
@@ -542,6 +593,26 @@ export function PortalGateway({ onSelectPortal }: PortalGatewayProps) {
                     </tbody>
                   </table>
                 </div>
+
+                {!isSingleClassEdition && (
+                  <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">
+                      Direct Class-Wise Portal Links (5 Editions)
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {CLASS_EDITIONS.map((ed) => (
+                        <a
+                          key={ed.queryKey}
+                          href={ed.slug}
+                          className={`px-3.5 py-2.5 rounded-lg border ${ed.borderClass} bg-white hover:bg-blue-50/50 transition-colors flex items-center justify-between gap-2 text-xs font-semibold text-slate-800`}
+                        >
+                          <span>{ed.title}</span>
+                          <ArrowRight className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="lg:col-span-5">

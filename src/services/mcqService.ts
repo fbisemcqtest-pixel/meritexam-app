@@ -31,6 +31,7 @@ import {
   TestAttempt,
   TestDeliveryOverride,
   UserRole,
+  isSingleStudentGrade,
 } from '../types';
 
 export interface GenerateMCQRequest {
@@ -48,6 +49,8 @@ export interface GenerateMCQRequest {
   includeLongOr?: boolean;
   shortMarks?: number;
   longMarks?: number;
+  longMarksList?: number[];
+  fbiseExclusionClause?: string;
   avoidPrompts?: string[];
 }
 
@@ -287,6 +290,10 @@ export async function generateMCQsFromServer(
 
     while (longRemaining > 0 && longBatchIdx < 18) {
       const chunkLong = Math.min(longRemaining, longBatchSize);
+      const startIdx = collectedLong.length;
+      const chunkLongMarksList = Array.isArray(req.longMarksList)
+        ? req.longMarksList.slice(startIdx, startIdx + chunkLong)
+        : undefined;
       const avoidLongPrompts = collectedLong
         .slice(-30)
         .flatMap((q) => [q.prompt.slice(0, 100), ...(q.orPrompt ? [q.orPrompt.slice(0, 100)] : [])]);
@@ -298,6 +305,9 @@ export async function generateMCQsFromServer(
           questionCount: 0,
           shortQuestionCount: 0,
           longQuestionCount: chunkLong,
+          ...(chunkLongMarksList && chunkLongMarksList.length > 0
+            ? { longMarksList: chunkLongMarksList }
+            : {}),
           ...(avoidLongPrompts.length > 0 ? { avoidPrompts: avoidLongPrompts } : {}),
         });
       } catch (err) {
@@ -316,9 +326,12 @@ export async function generateMCQsFromServer(
       const existingLongSet = new Set(
         collectedLong.map((q) => q.prompt.trim().toLowerCase()),
       );
-      const freshLong = longRes.longQuestions.filter(
-        (q) => !existingLongSet.has(q.prompt.trim().toLowerCase()),
-      );
+      const freshLong = longRes.longQuestions
+        .filter((q) => !existingLongSet.has(q.prompt.trim().toLowerCase()))
+        .map((q, localIdx) => {
+          const explicitMarks = req.longMarksList?.[startIdx + localIdx];
+          return explicitMarks ? { ...q, marks: explicitMarks } : q;
+        });
       collectedLong.push(...freshLong);
       onProgress?.(
         Math.min(collectedLong.length, totalRequestedLong),
@@ -334,7 +347,7 @@ export async function generateMCQsFromServer(
   // 3. Generate MCQs in Netlify-safe batches
   let remaining = totalRequestedMcqs - collectedQuestions.length;
   let batchIndex = 0;
-  let activeBatchSize = 8;
+  let activeBatchSize = 10;
 
   while (remaining > 0 && batchIndex < 35) {
     const chunkCount = Math.min(remaining, activeBatchSize);
@@ -664,6 +677,20 @@ export async function releaseAttemptResult(attemptId: string, adminOrTeacherUid:
   }
 }
 
+export async function toggleAttemptAnswerKeyRelease(
+  attemptId: string,
+  allowed: boolean,
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'attempts', attemptId), {
+      answerKeyReleased: allowed,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `attempts/${attemptId}`);
+  }
+}
+
 export async function deleteTestAttempt(attemptId: string): Promise<void> {
   try {
     await deleteDoc(doc(db, 'attempts', attemptId));
@@ -672,11 +699,31 @@ export async function deleteTestAttempt(attemptId: string): Promise<void> {
   }
 }
 
+export async function updateAccountClass(input: {
+  uid: string;
+  grade: GradeLevel;
+  adminUid: string;
+}): Promise<void> {
+  if (!isSingleStudentGrade(input.grade)) {
+    throw new Error('Student accounts must be assigned to a single valid class.');
+  }
+  try {
+    await updateDoc(doc(db, 'users', input.uid), {
+      grade: input.grade,
+      approvedBy: input.adminUid,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${input.uid}`);
+  }
+}
+
 export async function updateAccountApproval(input: {
   uid: string;
   email: string;
   status: AccountStatus;
   role?: UserRole;
+  grade?: GradeLevel;
   adminUid: string;
 }): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -686,6 +733,9 @@ export async function updateAccountApproval(input: {
   };
   if (input.role) {
     payload.role = input.role;
+  }
+  if (input.grade && isSingleStudentGrade(input.grade)) {
+    payload.grade = input.grade;
   }
 
   try {
@@ -783,6 +833,7 @@ export async function saveSystemSettings(
     await setDoc(doc(db, 'systemSettings', 'global'), {
       ...settings,
       allowTeacherPaperCreation: settings.allowTeacherPaperCreation ?? true,
+      allowStudentAnswerKeyReview: settings.allowStudentAnswerKeyReview ?? false,
       defaultTimeLimitMinutes: Math.min(Math.max(Math.round(settings.defaultTimeLimitMinutes), 1), 180),
       passingPercentage: Math.min(Math.max(Math.round(settings.passingPercentage), 1), 100),
       updatedBy: adminUid,
@@ -804,6 +855,26 @@ export async function toggleTeacherPaperCreation(
       testAccessMode: currentSettings.testAccessMode,
       allowStudentInstantPractice: currentSettings.allowStudentInstantPractice,
       allowTeacherPaperCreation: allowed,
+      allowStudentAnswerKeyReview: currentSettings.allowStudentAnswerKeyReview ?? false,
+      defaultTimeLimitMinutes: currentSettings.defaultTimeLimitMinutes,
+      passingPercentage: currentSettings.passingPercentage,
+    },
+    adminUid,
+  );
+}
+
+export async function toggleStudentAnswerKeyReview(
+  allowed: boolean,
+  adminUid: string,
+  currentSettings: SystemSettings,
+): Promise<void> {
+  await saveSystemSettings(
+    {
+      resultMode: currentSettings.resultMode,
+      testAccessMode: currentSettings.testAccessMode,
+      allowStudentInstantPractice: currentSettings.allowStudentInstantPractice,
+      allowTeacherPaperCreation: currentSettings.allowTeacherPaperCreation ?? true,
+      allowStudentAnswerKeyReview: allowed,
       defaultTimeLimitMinutes: currentSettings.defaultTimeLimitMinutes,
       passingPercentage: currentSettings.passingPercentage,
     },

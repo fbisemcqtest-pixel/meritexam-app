@@ -18,8 +18,10 @@ import {
   SystemSettings,
   TestAttempt,
   UserAccount,
+  getAttemptBreakdown,
 } from '../types';
 import { submitTestAttempt } from '../services/mcqService';
+import { getEffectiveTestEndMs } from '../utils/studentRecord';
 
 interface TestRunnerProps {
   test: MCQTest;
@@ -31,9 +33,7 @@ interface TestRunnerProps {
 }
 
 function getScheduledEndMs(test: MCQTest): number | null {
-  if (!test.scheduledEndAt) return null;
-  const ms = new Date(test.scheduledEndAt).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  return getEffectiveTestEndMs(test);
 }
 
 export function TestRunner({
@@ -648,12 +648,20 @@ export function TestRunner({
                   </span>
                 </div>
                 {hasMcqs && (
-                  <div className="px-4 py-2.5 flex justify-between">
-                    <span className="text-slate-500">MCQs Recorded</span>
-                    <span className="font-medium text-slate-900 tabular-nums">
-                      {answeredCount} / {test.questions.length}
-                    </span>
-                  </div>
+                  <>
+                    <div className="px-4 py-2.5 flex justify-between">
+                      <span className="text-slate-500">Questions Attempted</span>
+                      <span className="font-medium text-slate-900 tabular-nums">
+                        {answeredCount} / {test.questions.length}
+                      </span>
+                    </div>
+                    <div className="px-4 py-2.5 flex justify-between">
+                      <span className="text-slate-500">Questions Left / Skipped</span>
+                      <span className="font-medium text-slate-900 tabular-nums">
+                        {Math.max(0, test.questions.length - answeredCount)} / {test.questions.length}
+                      </span>
+                    </div>
+                  </>
                 )}
                 <div className="px-4 py-2.5 flex justify-between">
                   <span className="text-slate-500">Final Status</span>
@@ -711,12 +719,20 @@ export function TestRunner({
                   </span>
                 </div>
                 {hasMcqs && (
-                  <div className="px-4 py-2.5 flex justify-between">
-                    <span className="text-slate-500">MCQs Answered</span>
-                    <span className="font-medium text-slate-900 tabular-nums">
-                      {answeredCount} / {test.questions.length}
-                    </span>
-                  </div>
+                  <>
+                    <div className="px-4 py-2.5 flex justify-between">
+                      <span className="text-slate-500">Questions Attempted</span>
+                      <span className="font-medium text-slate-900 tabular-nums">
+                        {answeredCount} / {test.questions.length}
+                      </span>
+                    </div>
+                    <div className="px-4 py-2.5 flex justify-between">
+                      <span className="text-slate-500">Questions Left / Skipped</span>
+                      <span className="font-medium text-slate-900 tabular-nums">
+                        {Math.max(0, test.questions.length - answeredCount)} / {test.questions.length}
+                      </span>
+                    </div>
+                  </>
                 )}
                 {shortQuestions.length > 0 && (
                   <div className="px-4 py-2.5 flex justify-between">
@@ -755,6 +771,13 @@ export function TestRunner({
 
     // Option 1: Instant Mode OR Released Result Review
     const passed = submittedAttempt.percentage >= (systemSettings.passingPercentage || 50);
+    const breakdown = getAttemptBreakdown(submittedAttempt);
+    const canViewAnswerKey =
+      previewMode ||
+      (Boolean(submittedAttempt.resultReleased) &&
+        !submittedAttempt.autoCancelled &&
+        (systemSettings.allowStudentAnswerKeyReview === true ||
+          submittedAttempt.answerKeyReleased === true));
 
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -769,7 +792,7 @@ export function TestRunner({
             </button>
             <div className="truncate">
               <h1 className="font-display font-semibold text-slate-900 truncate">
-                {test.title} — Answer Review
+                {test.title} — {canViewAnswerKey ? 'Answer Key (Read-Only)' : 'Result Summary'}
               </h1>
               <p className="text-xs text-slate-500">
                 {test.grade} · {test.subject}
@@ -782,11 +805,21 @@ export function TestRunner({
             onClick={onExit}
             className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg shrink-0 cursor-pointer"
           >
-            Done
+            {canViewAnswerKey ? 'Close Answer Key' : 'Back to Dashboard'}
           </button>
         </header>
 
         <main className="max-w-4xl w-full mx-auto px-6 py-8 space-y-6">
+          {canViewAnswerKey && !previewMode && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs text-blue-950">
+              <div className="flex items-center gap-2 font-semibold">
+                <ShieldCheck className="w-4 h-4 text-blue-700 shrink-0" />
+                <span>
+                  Read-Only Answer Key View (Permitted by Administrator) — Your chosen answers vs. correct answers are shown below. Solving or re-attempting is disabled.
+                </span>
+              </div>
+            </div>
+          )}
           {/* Score Summary Card */}
           <div className="bg-white border border-slate-200 rounded-xl p-6 grid grid-cols-1 sm:grid-cols-4 gap-6">
             <div>
@@ -831,8 +864,64 @@ export function TestRunner({
             </div>
           </div>
 
-          {/* Question-by-question MCQ key */}
           {hasMcqs && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs font-medium text-slate-500">Questions Attempted</p>
+                <p className="font-display text-2xl font-bold text-slate-900 tabular-nums mt-1">
+                  {breakdown.attempted} <span className="text-sm font-medium text-slate-500">/ {breakdown.total}</span>
+                </p>
+              </div>
+              <div className="bg-white border border-emerald-200 rounded-xl p-4">
+                <p className="text-xs font-medium text-emerald-700">Correct Answers</p>
+                <p className="font-display text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+                  {breakdown.correct}
+                </p>
+              </div>
+              <div className="bg-white border border-red-200 rounded-xl p-4">
+                <p className="text-xs font-medium text-red-700">Wrong Answers</p>
+                <p className="font-display text-2xl font-bold text-red-700 tabular-nums mt-1">
+                  {breakdown.wrong}
+                </p>
+              </div>
+              <div className="bg-white border border-amber-200 rounded-xl p-4">
+                <p className="text-xs font-medium text-amber-800">Left / Skipped</p>
+                <p className="font-display text-2xl font-bold text-amber-700 tabular-nums mt-1">
+                  {breakdown.skipped}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!canViewAnswerKey ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-display text-base font-bold text-slate-900">
+                    Question Paper Closed — Result Saved to Record
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
+                    Once submitted, the question paper is closed and removed from your active papers. Only your marks, percentage, and summary counts are kept in your Results &amp; Record tab. Answer Key viewing is only available if enabled by the Administrator.
+                  </p>
+                </div>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onExit}
+                  className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+                >
+                  Return to Student Dashboard
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Question-by-question MCQ key */}
+          {canViewAnswerKey && hasMcqs && (
             <div className="space-y-4">
               <h2 className="font-display text-sm font-bold uppercase tracking-wider text-slate-700">
                 Section A — Multiple Choice Questions
@@ -901,7 +990,7 @@ export function TestRunner({
           )}
 
           {/* Short Questions Review */}
-          {shortQuestions.length > 0 && (
+          {canViewAnswerKey && shortQuestions.length > 0 && (
             <div className="space-y-4">
               <h2 className="font-display text-sm font-bold uppercase tracking-wider text-teal-800">
                 Question {hasMcqs ? 2 : 1} — Short Answer Questions
@@ -951,7 +1040,7 @@ export function TestRunner({
           )}
 
           {/* Long Questions Review */}
-          {longQuestions.length > 0 && (
+          {canViewAnswerKey && longQuestions.length > 0 && (
             <div className="space-y-4">
               <h2 className="font-display text-sm font-bold uppercase tracking-wider text-indigo-800">
                 Question {(hasMcqs ? 1 : 0) + (shortQuestions.length > 0 ? 1 : 0) + 1} — Long / Descriptive Questions

@@ -979,6 +979,7 @@ export interface SystemSettings {
   testAccessMode: TestAccessMode;
   allowStudentInstantPractice: boolean;
   allowTeacherPaperCreation?: boolean;
+  allowStudentAnswerKeyReview?: boolean;
   defaultTimeLimitMinutes: number;
   passingPercentage: number;
   updatedBy: string;
@@ -1053,6 +1054,7 @@ export interface TestAttempt {
   percentage: number;
   deliveryModeUsed: ResultMode;
   resultReleased: boolean;
+  answerKeyReleased?: boolean;
   status: 'submitted' | 'reviewed';
   releasedBy: string;
   autoCancelled?: boolean;
@@ -1060,3 +1062,31 @@ export interface TestAttempt {
   submittedAt?: unknown;
   updatedAt?: unknown;
 }
+
+export interface AttemptQuestionBreakdown {
+  total: number;
+  attempted: number;
+  correct: number;
+  wrong: number;
+  skipped: number;
+}
+
+export function getAttemptBreakdown(
+  attempt: Pick<TestAttempt, 'answers' | 'score' | 'totalQuestions'>,
+): AttemptQuestionBreakdown {
+  const total = Math.max(0, attempt.totalQuestions ?? attempt.answers?.length ?? 0);
+  const rawAnswered = Array.isArray(attempt.answers)
+    ? attempt.answers.slice(0, total).filter((a) => typeof a === 'number' && a >= 0).length
+    : 0;
+  const correct = Math.min(total, Math.max(0, attempt.score ?? 0));
+  const attempted = Math.min(total, Math.max(rawAnswered, correct));
+  const wrong = Math.max(0, attempted - correct);
+  const skipped = Math.max(0, total - attempted);
+  return { total, attempted, correct, wrong, skipped };
+}
+
+export function isSingleStudentGrade(grade: unknown): grade is GradeLevel {
+  return typeof grade === 'string' && (GRADES as string[]).includes(grade.trim());
+}
+
+

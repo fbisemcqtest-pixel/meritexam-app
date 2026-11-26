@@ -3,6 +3,7 @@ import {
   BorderStyle,
   Document,
   Footer,
+  ImageRun,
   Packer,
   PageBreak,
   Paragraph,
@@ -20,6 +21,7 @@ import {
 } from 'docx';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
+import { getMonogramForWordExport } from './apsacsMonogram';
 import {
   BOARD_PRINT_LABELS,
   ExamBoard,
@@ -34,6 +36,7 @@ import {
   formatDurationHoursMin,
   formatRomanPart,
   getBoardLevelCode,
+  getRomanGradeNumeral,
 } from '../data/fbisePatterns';
 
 export interface WordPaperExportInput {
@@ -41,6 +44,7 @@ export interface WordPaperExportInput {
   board: ExamBoard;
   schoolName: string;
   examLabel: string;
+  sessionLabel?: string;
   formattedDate: string;
   grade: GradeLevel;
   subject: SubjectName;
@@ -58,14 +62,29 @@ export interface WordPaperExportInput {
   longQuestions: SubjectiveQuestion[];
   shortChoiceNote: string;
   longChoiceNote: string;
-  paperStyle: 'fbise_official' | 'standard';
+  paperStyle: 'fbise_official' | 'apsacs_official' | 'standard';
   paperSize: 'a4' | 'legal';
   compactLayout: boolean;
   sideBySideOr: boolean;
   twoColumnMcqs: boolean;
   showOmrGrid: boolean;
+  showMonogram?: boolean;
+  customMonogramUrl?: string;
   separateSectionA: boolean;
   includeAnswerKey: boolean;
+}
+
+const URDU_SCRIPT_REGEX = /[\u0600-\u06FF]/;
+
+function hasRtlScript(text?: string): boolean {
+  return Boolean(text && URDU_SCRIPT_REGEX.test(text));
+}
+
+function formatMarksBadge(marks: number): string {
+  if (Number.isInteger(marks) && marks >= 0 && marks < 10) {
+    return `0${marks}`;
+  }
+  return `${marks}`;
 }
 
 export function sanitizeFileName(rawName: string): string {
@@ -439,6 +458,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     board,
     schoolName,
     examLabel,
+    sessionLabel = 'SESSION 2026-2027',
     formattedDate,
     grade,
     subject,
@@ -462,18 +482,29 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     sideBySideOr,
     twoColumnMcqs,
     showOmrGrid,
+    showMonogram = true,
+    customMonogramUrl = '',
     separateSectionA,
     includeAnswerKey,
   } = input;
 
   const CIRCLED_DIGITS = ['⓪', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'];
   const CIRCLED_LETTERS = ['Ⓐ', 'Ⓑ', 'Ⓒ', 'Ⓓ'];
+  const OPEN_CIRCLES = ['○', '○', '○', '○'];
   const optionTag = (optIdx: number) => `(${String.fromCharCode(65 + optIdx)}) `;
 
   const qFontSize = compactLayout ? 18 : 20;
   const optFontSize = compactLayout ? 17 : 19;
 
-  const isOfficial = paperStyle === 'fbise_official';
+  const isApsacs = paperStyle === 'apsacs_official';
+  const isOfficial = paperStyle === 'fbise_official' || isApsacs;
+  const romanGrade = getRomanGradeNumeral(grade);
+  const marksPerQuestionPhrase =
+    marksPerQuestion === 1
+      ? 'one mark'
+      : marksPerQuestion < 1
+        ? `${marksPerQuestion} mark`
+        : `${marksPerQuestion} marks`;
   const mcqQuestionNum = questions.length > 0 ? 1 : 0;
   const shortQuestionNum = shortQuestions.length > 0 ? mcqQuestionNum + 1 : 0;
   const longStartNum = (shortQuestionNum || mcqQuestionNum) + 1;
@@ -490,15 +521,352 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
       : durationMinutes;
   const hasShortOr = shortQuestions.some((q) => Boolean(q.orPrompt?.trim()));
   const hasLongOr = longQuestions.some((q) => Boolean(q.orPrompt?.trim()));
+  const isRtlSubject = subject === 'Urdu' || subject === 'Islamiat';
 
   const children: Array<Paragraph | Table> = [];
 
+  const monogramImg = showMonogram && (isApsacs || Boolean(customMonogramUrl.trim()))
+    ? await getMonogramForWordExport(customMonogramUrl)
+    : null;
+
+  const createMonogramParagraph = (targetHeightPx: number, afterSpacing = 25): Paragraph | null => {
+    if (!monogramImg) return null;
+    const scaledWidth = Math.max(
+      24,
+      Math.round(monogramImg.width * (targetHeightPx / Math.max(1, monogramImg.height))),
+    );
+    return new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 0, after: afterSpacing },
+      children: [
+        new ImageRun({
+          type: 'png',
+          data: monogramImg.bytes,
+          transformation: {
+            width: scaledWidth,
+            height: targetHeightPx,
+          },
+        }),
+      ],
+    });
+  };
+
   // 1. Header Block
-  if (isOfficial) {
+  if (isApsacs) {
+    const trimmedSchool = schoolName.trim();
+    const isGenericApsacsName =
+      !trimmedSchool ||
+      trimmedSchool.toLowerCase() === 'army public schools & colleges system' ||
+      trimmedSchool.toLowerCase() === 'apsacs';
+    const apsacsHeaderName = trimmedSchool
+      ? trimmedSchool.toUpperCase()
+      : 'ARMY PUBLIC SCHOOLS & COLLEGES SYSTEM';
+    const apsacsExamText = examLabel.trim()
+      ? examLabel.trim().toUpperCase()
+      : 'PRE-BOARD EXAMINATION (COLD & WARM REGION)';
+    const apsacsSessionText = sessionLabel.trim()
+      ? sessionLabel.trim().toUpperCase()
+      : 'SESSION 2026-2027';
+
+    const omrBlockParagraphs = (cols: number, label: string, boxText: string): Paragraph[] => [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 20 },
+        children: [
+          new TextRun({ text: label, bold: true, size: 17, color: '0F172A', font: 'Calibri' }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 30 },
+        children: [
+          new TextRun({ text: boxText, bold: true, size: 16, color: '0F172A', font: 'Consolas' }),
+        ],
+      }),
+      ...CIRCLED_DIGITS.map(
+        (digitChar) =>
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 0, after: 6 },
+            children: [
+              new TextRun({
+                text: Array.from({ length: cols }, () => digitChar).join(' '),
+                size: 16,
+                color: '1E293B',
+                font: 'Segoe UI Symbol',
+              }),
+            ],
+          }),
+      ),
+    ];
+
+    const apsacsMonogramParagraph = createMonogramParagraph(compactLayout ? 50 : 60, 20);
+    const shouldPrintApsacsTextLine =
+      !apsacsMonogramParagraph ||
+      (customMonogramUrl.trim() ? Boolean(trimmedSchool) : !isGenericApsacsName);
+
+    const apsacsLeftChildren: Paragraph[] = [
+      ...(apsacsMonogramParagraph ? [apsacsMonogramParagraph] : []),
+      ...(shouldPrintApsacsTextLine
+        ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: 20 },
+              children: [
+                new TextRun({
+                  text: apsacsHeaderName,
+                  bold: true,
+                  size: 16,
+                  color: '0F172A',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+          ]
+        : []),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 15 },
+        children: [
+          new TextRun({
+            text: boardLevelCode,
+            bold: true,
+            size: 22,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 20 },
+        children: [
+          new TextRun({
+            text: subject.toUpperCase(),
+            bold: true,
+            size: 25,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 15 },
+        children: [
+          new TextRun({
+            text:
+              questions.length > 0
+                ? `Section – A (Marks ${mcqTotalMarks})`
+                : `Subjective Part (Marks ${totalMarks})`,
+            bold: true,
+            size: 19,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 30 },
+        children: [
+          new TextRun({
+            text:
+              questions.length > 0
+                ? `Time Allowed: ${resolvedSectionATime} Minutes`
+                : `Time Allowed: ${formatDurationHoursMin(durationMinutes)}`,
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      ...(questions.length > 0
+        ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: isRtlSubject ? 20 : 60 },
+              children: [
+                new TextRun({
+                  text: 'Section – A is compulsory. All parts of this section are to be answered on this page and handed over to the Centre Superintendent. Deleting/overwriting is not allowed. Do not use lead pencil.',
+                  size: 16,
+                  color: '1E293B',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+            ...(isRtlSubject
+              ? [
+                  new Paragraph({
+                    bidirectional: true,
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 0, after: 55 },
+                    children: [
+                      new TextRun({
+                        text: 'نوٹ: حصہ اول لازمی ہے، اس کے جوابات اسی صفحہ پر دے کر ناظم مرکز کے حوالے کردیں۔ کاٹ کر دوبارہ لکھنے کی اجازت نہیں۔ لیڈ پنسل کا استعمال ممنوع ہے۔',
+                        size: 16,
+                        color: '1E293B',
+                        font: 'Tahoma',
+                        rightToLeft: true,
+                      }),
+                    ],
+                  }),
+                ]
+              : []),
+          ]
+        : []),
+      new Paragraph({
+        spacing: { before: 35, after: 30 },
+        children: [
+          new TextRun({
+            text: 'Candidate Name: _____________________________',
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { before: 0, after: 0 },
+        children: [
+          new TextRun({
+            text: 'Class & Section: _____________________________',
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+    ];
+
+    const apsacsRightChildren: Array<Paragraph | Table> = [
+      ...(showOmrGrid
+        ? [
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              layout: TableLayoutType.FIXED,
+              rows: [
+                new TableRow({
+                  cantSplit: true,
+                  children: [
+                    new TableCell({
+                      width: { size: 42, type: WidthType.PERCENTAGE },
+                      borders: NO_CELL_BORDERS,
+                      margins: { top: 0, bottom: 20, left: 20, right: 40 },
+                      children: omrBlockParagraphs(4, 'Version No', '[ ][ ][ ][ ]'),
+                    }),
+                    new TableCell({
+                      width: { size: 58, type: WidthType.PERCENTAGE },
+                      borders: NO_CELL_BORDERS,
+                      margins: { top: 0, bottom: 20, left: 40, right: 20 },
+                      children: omrBlockParagraphs(6, 'Roll Number', '[ ][ ][ ][ ][ ][ ]'),
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ]
+        : [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 20, after: 40 },
+              children: [
+                new TextRun({ text: 'Version No: ', bold: true, size: 17, font: 'Calibri' }),
+                new TextRun({ text: '[ ][ ][ ][ ]   ', bold: true, size: 17, font: 'Consolas' }),
+                new TextRun({ text: 'Roll Number: ', bold: true, size: 17, font: 'Calibri' }),
+                new TextRun({ text: '[ ][ ][ ][ ][ ][ ]', bold: true, size: 17, font: 'Consolas' }),
+              ],
+            }),
+          ]),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 40, after: 15 },
+        children: [
+          new TextRun({
+            text: apsacsExamText,
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 45 },
+        children: [
+          new TextRun({
+            text: apsacsSessionText,
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { before: 0, after: 30 },
+        children: [
+          new TextRun({
+            text: 'Answer Sheet No. ___________________________',
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { before: 0, after: 0 },
+        children: [
+          new TextRun({
+            text: `Sign. of Invigilator _________________________${formattedDate ? ` (${formattedDate})` : ''}`,
+            bold: true,
+            size: 18,
+            color: '0F172A',
+            font: 'Calibri',
+          }),
+        ],
+      }),
+    ];
+
+    children.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows: [
+          new TableRow({
+            cantSplit: true,
+            children: [
+              new TableCell({
+                width: { size: 52, type: WidthType.PERCENTAGE },
+                borders: NO_CELL_BORDERS,
+                margins: { top: 20, bottom: 20, left: 20, right: 120 },
+                children: apsacsLeftChildren,
+              }),
+              new TableCell({
+                width: { size: 48, type: WidthType.PERCENTAGE },
+                borders: NO_CELL_BORDERS,
+                margins: { top: 20, bottom: 20, left: 80, right: 20 },
+                children: apsacsRightChildren,
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+  } else if (isOfficial) {
     const headerRows: TableRow[] = [];
 
     // Title Row
     const headerParagraphs: Paragraph[] = [];
+    if (customMonogramUrl.trim()) {
+      const customLogoPara = createMonogramParagraph(48, 25);
+      if (customLogoPara) headerParagraphs.push(customLogoPara);
+    }
     if (schoolName.trim()) {
       headerParagraphs.push(
         new Paragraph({
@@ -876,6 +1244,10 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     );
   } else {
     // Standard School Sheet Header
+    if (customMonogramUrl.trim()) {
+      const customLogoPara = createMonogramParagraph(50, 25);
+      if (customLogoPara) children.push(customLogoPara);
+    }
     if (schoolName.trim()) {
       children.push(
         new Paragraph({
@@ -994,22 +1366,32 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
 
   // 2. Section A: Objective MCQs
   if (questions.length > 0) {
-    children.push(
-      createSectionBanner(
-        isOfficial
-          ? `SECTION – A (Marks ${mcqTotalMarks})`
-          : `Question ${mcqQuestionNum}: Multiple Choice Questions (Objective)`,
-        isOfficial
-          ? `Time allowed: ${resolvedSectionATime} minutes`
-          : `Marks: ${mcqTotalMarks} (${questions.length} × ${marksPerQuestion})`,
-        isOfficial,
-      ),
-    );
-
-    if (isOfficial) {
+    if (isApsacs) {
       children.push(
         new Paragraph({
-          spacing: { before: 60, after: 35 },
+          spacing: { before: 40, after: compactLayout ? 55 : 90 },
+          children: [
+            new TextRun({
+              text: `Q-${mcqQuestionNum}: Fill the relevant bubble for each part. Each part carries ${marksPerQuestionPhrase}.`,
+              bold: true,
+              size: 19,
+              color: '0F172A',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+    } else if (isOfficial) {
+      children.push(
+        createSectionBanner(
+          `SECTION – A (Marks ${mcqTotalMarks})`,
+          `Time allowed: ${resolvedSectionATime} minutes`,
+          true,
+        ),
+      );
+      children.push(
+        new Paragraph({
+          spacing: { before: 60, after: isRtlSubject ? 25 : 35 },
           children: [
             new TextRun({
               text: `Note: Section – A is compulsory. All parts of this section are to be answered on the separately provided OMR Answer Sheet / question paper itself. It should be completed in the first ${resolvedSectionATime} minutes and handed over to the Centre Superintendent. Deleting/overwriting is not allowed. Do not use lead pencil.`,
@@ -1020,14 +1402,30 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           ],
         }),
       );
+      if (isRtlSubject) {
+        children.push(
+          new Paragraph({
+            bidirectional: true,
+            alignment: AlignmentType.RIGHT,
+            spacing: { before: 0, after: 35 },
+            children: [
+              new TextRun({
+                text: 'نوٹ: حصہ اول لازمی ہے، اس کے جوابات اسی صفحہ پر دے کر ناظم مرکز کے حوالے کردیں۔ کاٹ کر دوبارہ لکھنے کی اجازت نہیں۔ لیڈ پنسل کا استعمال ممنوع ہے۔',
+                size: 17,
+                color: '1E293B',
+                font: 'Tahoma',
+                rightToLeft: true,
+              }),
+            ],
+          }),
+        );
+      }
       children.push(
         new Paragraph({
           spacing: { before: 0, after: compactLayout ? 70 : 110 },
           children: [
             new TextRun({
-              text: `Q.${mcqQuestionNum} Fill the relevant bubble / circle against each question according to curriculum. Each part carries ${
-                marksPerQuestion === 1 ? 'one mark' : `${marksPerQuestion} marks`
-              }.`,
+              text: `Q.${mcqQuestionNum} Fill the relevant bubble / circle against each question according to curriculum. Each part carries ${marksPerQuestionPhrase}.`,
               bold: true,
               size: 18,
               color: '0F172A',
@@ -1037,6 +1435,13 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         }),
       );
     } else {
+      children.push(
+        createSectionBanner(
+          `Question ${mcqQuestionNum}: Multiple Choice Questions (Objective)`,
+          `Marks: ${mcqTotalMarks} (${questions.length} × ${marksPerQuestion})`,
+          false,
+        ),
+      );
       children.push(
         new Paragraph({
           spacing: { before: 70, after: compactLayout ? 80 : 120 },
@@ -1139,200 +1544,257 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         }),
       );
     } else if (isOfficial) {
+      const mcqHeaderBorders = {
+        top: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        bottom: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        left: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+        right: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+      };
+
+      const makeHeaderCell = (label: string, widthPct: number, centered = true) =>
+        new TableCell({
+          width: { size: widthPct, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+          verticalAlign: VerticalAlign.CENTER,
+          borders: mcqHeaderBorders,
+          margins: { top: 35, bottom: 35, left: 40, right: 40 },
+          children: [
+            new Paragraph({
+              alignment: centered ? AlignmentType.CENTER : AlignmentType.LEFT,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text: label,
+                  bold: true,
+                  size: 15,
+                  color: '1E293B',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+          ],
+        });
+
       const fbiseMcqRows: TableRow[] = [
         new TableRow({
           tableHeader: true,
           cantSplit: true,
           children: [
-            new TableCell({
-              width: { size: 81, type: WidthType.PERCENTAGE },
-              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
-              borders: {
-                top: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                bottom: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-              },
-              margins: { top: 35, bottom: 35, left: 80, right: 60 },
-              children: [
-                new Paragraph({
-                  spacing: { before: 0, after: 0 },
-                  children: [
-                    new TextRun({
-                      text: 'QUESTIONS & OPTIONS',
-                      bold: true,
-                      size: 15,
-                      color: '334155',
-                      font: 'Calibri',
-                    }),
-                  ],
-                }),
-              ],
-            }),
-            new TableCell({
-              width: { size: 19, type: WidthType.PERCENTAGE },
-              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
-              verticalAlign: VerticalAlign.CENTER,
-              borders: {
-                top: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                bottom: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
-              },
-              margins: { top: 35, bottom: 35, left: 40, right: 40 },
-              children: [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  spacing: { before: 0, after: 0 },
-                  children: [
-                    new TextRun({
-                      text: 'BUBBLES (A B C D)',
-                      bold: true,
-                      size: 15,
-                      color: '334155',
-                      font: 'Calibri',
-                    }),
-                  ],
-                }),
-              ],
-            }),
+            makeHeaderCell(isApsacs ? 'Ser' : 'S#', 7, true),
+            makeHeaderCell(isApsacs ? 'Question' : 'QUESTION', 33, false),
+            makeHeaderCell(isApsacs ? 'A' : '(A)', 11, true),
+            makeHeaderCell(isApsacs ? 'B' : '(B)', 11, true),
+            makeHeaderCell(isApsacs ? 'C' : '(C)', 11, true),
+            makeHeaderCell(isApsacs ? 'D' : '(D)', 11, true),
+            makeHeaderCell('A B C D', 16, true),
           ],
         }),
       ];
 
       questions.forEach((q, idx) => {
-        const hasLongOpt = q.options.some((opt) => opt.trim().length > 20);
-        const optionParagraphs: Paragraph[] = hasLongOpt
-          ? [0, 2].map(
-              (startIdx) =>
-                new Paragraph({
-                  indent: { left: convertInchesToTwip(0.22) },
-                  tabStops: [{ type: TabStopType.LEFT, position: convertInchesToTwip(2.85) }],
-                  spacing: { before: 0, after: startIdx === 0 ? 10 : 0 },
-                  children: [
-                    new TextRun({
-                      text: `(${String.fromCharCode(65 + startIdx)}) `,
-                      bold: true,
-                      size: optFontSize,
-                      color: '0F172A',
-                      font: 'Calibri',
-                    }),
-                    new TextRun({
-                      text: q.options[startIdx] ?? '',
-                      size: optFontSize,
-                      color: '1E293B',
-                      font: 'Calibri',
-                    }),
-                    ...(q.options[startIdx + 1] !== undefined
-                      ? [
+        const rowIsRtl = isRtlSubject || hasRtlScript(q.prompt) || q.options.some((o) => hasRtlScript(o));
+        const textFont = rowIsRtl ? 'Tahoma' : 'Calibri';
+        const totalOptionChars = q.options.reduce((sum, opt) => sum + opt.trim().length, 0);
+        const anyOptionTooLong =
+          q.options.some((opt) => opt.trim().length > 26) || totalOptionChars > 84;
+
+        const bodyCellBorders = {
+          top: NO_CELL_BORDERS.top,
+          bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+        };
+
+        const serialCell = new TableCell({
+          width: { size: 7, type: WidthType.PERCENTAGE },
+          verticalAlign: VerticalAlign.CENTER,
+          shading: isApsacs ? undefined : { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+          borders: {
+            ...bodyCellBorders,
+            left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+          },
+          margins: { top: compactLayout ? 25 : 45, bottom: compactLayout ? 25 : 45, left: 25, right: 25 },
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text: isApsacs ? `${idx + 1}.` : `(${idx + 1})`,
+                  bold: true,
+                  size: qFontSize - 1,
+                  color: '0F172A',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+          ],
+        });
+
+        const bubblesCell = new TableCell({
+          width: { size: 16, type: WidthType.PERCENTAGE },
+          verticalAlign: VerticalAlign.CENTER,
+          shading: isApsacs ? undefined : { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+          borders: {
+            ...bodyCellBorders,
+            right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+          },
+          margins: { top: 20, bottom: 20, left: 20, right: 20 },
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text: (isApsacs ? OPEN_CIRCLES : CIRCLED_LETTERS).join(' '),
+                  size: compactLayout ? 17 : 19,
+                  color: '0F172A',
+                  font: 'Segoe UI Symbol',
+                }),
+              ],
+            }),
+          ],
+        });
+
+        const middleCells: TableCell[] = anyOptionTooLong
+          ? [
+              new TableCell({
+                columnSpan: 5,
+                width: { size: 77, type: WidthType.PERCENTAGE },
+                borders: bodyCellBorders,
+                margins: {
+                  top: compactLayout ? 25 : 45,
+                  bottom: compactLayout ? 25 : 45,
+                  left: 70,
+                  right: 70,
+                },
+                children: [
+                  new Paragraph({
+                    bidirectional: rowIsRtl,
+                    alignment: rowIsRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                    spacing: { before: 0, after: 15 },
+                    children: [
+                      new TextRun({
+                        text: q.prompt,
+                        bold: true,
+                        size: qFontSize,
+                        color: '0F172A',
+                        font: textFont,
+                        rightToLeft: rowIsRtl,
+                      }),
+                    ],
+                  }),
+                  ...[0, 2].map(
+                    (startIdx) =>
+                      new Paragraph({
+                        bidirectional: rowIsRtl,
+                        alignment: rowIsRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                        tabStops: [{ type: TabStopType.LEFT, position: convertInchesToTwip(2.65) }],
+                        spacing: { before: 0, after: startIdx === 0 ? 10 : 0 },
+                        children: [
                           new TextRun({
-                            text: `\t(${String.fromCharCode(65 + startIdx + 1)}) `,
+                            text: `(${String.fromCharCode(65 + startIdx)}) `,
                             bold: true,
                             size: optFontSize,
                             color: '0F172A',
                             font: 'Calibri',
                           }),
                           new TextRun({
-                            text: q.options[startIdx + 1] ?? '',
+                            text: q.options[startIdx] ?? '',
                             size: optFontSize,
                             color: '1E293B',
-                            font: 'Calibri',
+                            font: textFont,
+                            rightToLeft: rowIsRtl,
                           }),
-                        ]
-                      : []),
-                  ],
-                }),
-            )
-          : [
-              new Paragraph({
-                indent: { left: convertInchesToTwip(0.22) },
-                spacing: { before: 0, after: 0 },
-                children: q.options.flatMap((opt, optIdx) => [
-                  new TextRun({
-                    text: `${optIdx > 0 ? '    ' : ''}(${String.fromCharCode(65 + optIdx)}) `,
-                    bold: true,
-                    size: optFontSize,
-                    color: '0F172A',
-                    font: 'Calibri',
-                  }),
-                  new TextRun({
-                    text: opt,
-                    size: optFontSize,
-                    color: '1E293B',
-                    font: 'Calibri',
-                  }),
-                ]),
+                          ...(q.options[startIdx + 1] !== undefined
+                            ? [
+                                new TextRun({
+                                  text: `\t(${String.fromCharCode(65 + startIdx + 1)}) `,
+                                  bold: true,
+                                  size: optFontSize,
+                                  color: '0F172A',
+                                  font: 'Calibri',
+                                }),
+                                new TextRun({
+                                  text: q.options[startIdx + 1] ?? '',
+                                  size: optFontSize,
+                                  color: '1E293B',
+                                  font: textFont,
+                                  rightToLeft: rowIsRtl,
+                                }),
+                              ]
+                            : []),
+                        ],
+                      }),
+                  ),
+                ],
               }),
-            ];
-
-        fbiseMcqRows.push(
-          new TableRow({
-            cantSplit: true,
-            children: [
+            ]
+          : [
               new TableCell({
-                width: { size: 81, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  left: { style: BorderStyle.SINGLE, size: 6, color: '94A3B8' },
-                  right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
+                width: { size: 33, type: WidthType.PERCENTAGE },
+                verticalAlign: VerticalAlign.CENTER,
+                borders: bodyCellBorders,
                 margins: {
-                  top: compactLayout ? 25 : 50,
-                  bottom: compactLayout ? 25 : 50,
-                  left: 80,
-                  right: 60,
+                  top: compactLayout ? 25 : 45,
+                  bottom: compactLayout ? 25 : 45,
+                  left: 65,
+                  right: 65,
                 },
                 children: [
                   new Paragraph({
-                    spacing: { before: 0, after: 15 },
+                    bidirectional: rowIsRtl,
+                    alignment: rowIsRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                    spacing: { before: 0, after: 0 },
                     children: [
-                      new TextRun({
-                        text: `(${idx + 1}) `,
-                        bold: true,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
                       new TextRun({
                         text: q.prompt,
                         bold: true,
                         size: qFontSize,
                         color: '0F172A',
-                        font: 'Calibri',
+                        font: textFont,
+                        rightToLeft: rowIsRtl,
                       }),
                     ],
                   }),
-                  ...optionParagraphs,
                 ],
               }),
-              new TableCell({
-                width: { size: 19, type: WidthType.PERCENTAGE },
-                verticalAlign: VerticalAlign.CENTER,
-                shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  right: { style: BorderStyle.SINGLE, size: 6, color: '94A3B8' },
-                },
-                margins: { top: 25, bottom: 25, left: 30, right: 30 },
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    spacing: { before: 0, after: 0 },
+              ...[0, 1, 2, 3].map(
+                (optIdx) =>
+                  new TableCell({
+                    width: { size: 11, type: WidthType.PERCENTAGE },
+                    verticalAlign: VerticalAlign.CENTER,
+                    borders: bodyCellBorders,
+                    margins: {
+                      top: compactLayout ? 25 : 45,
+                      bottom: compactLayout ? 25 : 45,
+                      left: 35,
+                      right: 35,
+                    },
                     children: [
-                      new TextRun({
-                        text: CIRCLED_LETTERS.join(' '),
-                        size: compactLayout ? 18 : 20,
-                        color: '0F172A',
-                        font: 'Segoe UI Symbol',
+                      new Paragraph({
+                        bidirectional: rowIsRtl,
+                        alignment: AlignmentType.CENTER,
+                        spacing: { before: 0, after: 0 },
+                        children: [
+                          new TextRun({
+                            text: q.options[optIdx] ?? '',
+                            size: optFontSize,
+                            color: '1E293B',
+                            font: textFont,
+                            rightToLeft: rowIsRtl,
+                          }),
+                        ],
                       }),
                     ],
                   }),
-                ],
-              }),
-            ],
+              ),
+            ];
+
+        fbiseMcqRows.push(
+          new TableRow({
+            cantSplit: true,
+            children: [serialCell, ...middleCells, bubblesCell],
           }),
         );
       });
@@ -1446,6 +1908,40 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
         );
       });
     }
+
+    if (isApsacs) {
+      children.push(
+        new Paragraph({
+          tabStops: [
+            { type: TabStopType.CENTER, position: TabStopPosition.MAX / 2 },
+            { type: TabStopType.RIGHT, position: TabStopPosition.MAX },
+          ],
+          spacing: { before: 65, after: 35 },
+          children: [
+            new TextRun({
+              text: `Class: ${romanGrade}`,
+              bold: true,
+              size: 17,
+              color: '0F172A',
+              font: 'Calibri',
+            }),
+            new TextRun({
+              text: `\tSection – A (${questions.length} MCQs · ${mcqTotalMarks} Marks)`,
+              size: 16,
+              color: '475569',
+              font: 'Calibri',
+            }),
+            new TextRun({
+              text: `\tSubject: ${subject}`,
+              bold: true,
+              size: 17,
+              color: '0F172A',
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      );
+    }
   }
 
   // Subjective Part Header (Sections B & C)
@@ -1475,6 +1971,39 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 },
                 margins: { top: 65, bottom: 65, left: 100, right: 100 },
                 children: [
+                  ...(separateSectionA && questions.length > 0 && isApsacs
+                    ? [
+                        new Paragraph({
+                          alignment: AlignmentType.CENTER,
+                          spacing: { before: 0, after: 15 },
+                          children: [
+                            new TextRun({
+                              text: schoolName.trim()
+                                ? schoolName.trim().toUpperCase()
+                                : 'ARMY PUBLIC SCHOOLS & COLLEGES SYSTEM',
+                              bold: true,
+                              size: 18,
+                              color: '0F172A',
+                              font: 'Calibri',
+                            }),
+                          ],
+                        }),
+                        new Paragraph({
+                          alignment: AlignmentType.CENTER,
+                          border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: '94A3B8' } },
+                          spacing: { before: 0, after: 35 },
+                          children: [
+                            new TextRun({
+                              text: `${subject.toUpperCase()} ${boardLevelCode} — SUBJECTIVE PART · ${(examLabel.trim() || 'PRE-BOARD EXAMINATION (COLD & WARM REGION)').toUpperCase()} (${(sessionLabel || 'SESSION 2026-2027').toUpperCase()})`,
+                              bold: true,
+                              size: 17,
+                              color: '0F172A',
+                              font: 'Calibri',
+                            }),
+                          ],
+                        }),
+                      ]
+                    : []),
                   new Paragraph({
                     tabStops: [
                       { type: TabStopType.CENTER, position: TabStopPosition.MAX / 2 },
@@ -1506,7 +2035,7 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                     ],
                   }),
                   new Paragraph({
-                    spacing: { before: 0, after: 0 },
+                    spacing: { before: 0, after: isRtlSubject ? 20 : 0 },
                     children: [
                       new TextRun({
                         text: "Note: Answer all parts from Section 'B' and all questions from Section 'C' on the E-sheet. Write your answers on the allotted / given spaces.",
@@ -1516,6 +2045,24 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                       }),
                     ],
                   }),
+                  ...(isRtlSubject
+                    ? [
+                        new Paragraph({
+                          bidirectional: true,
+                          alignment: AlignmentType.RIGHT,
+                          spacing: { before: 0, after: 0 },
+                          children: [
+                            new TextRun({
+                              text: 'نوٹ: حصہ دوم (Section B) اور حصہ سوم (Section C) کے تمام سوالات کے جوابات مہیا کی گئی جوابی کاپی (E-Sheet) پر مقررہ جگہ پر تحریر کریں۔',
+                              size: 16,
+                              color: '1E293B',
+                              font: 'Tahoma',
+                              rightToLeft: true,
+                            }),
+                          ],
+                        }),
+                      ]
+                    : []),
                 ],
               }),
             ],
@@ -1563,138 +2110,203 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
       }),
     );
 
-    if (sideBySideOr && hasShortOr) {
-      const shortTableRows = shortQuestions.map(
-        (sq, idx) =>
-          new TableRow({
-            cantSplit: true,
-            children: [
-              new TableCell({
-                width: { size: 7, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' },
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 35, bottom: 35, left: 20, right: 30 },
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: formatRomanPart(idx),
-                        bold: true,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 41, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: NO_CELL_BORDERS.right,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 35, bottom: 35, left: 50, right: 50 },
-                children: [
-                  new Paragraph({
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: sq.prompt,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 9, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 35, bottom: 35, left: 15, right: 15 },
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: sq.orPrompt?.trim() ? 'OR' : '—',
-                        bold: true,
-                        size: 16,
-                        color: '475569',
-                        font: 'Calibri',
-                      }),
-                      new TextRun({
-                        text: `[${sq.marks}]`,
-                        size: 15,
-                        color: '64748B',
-                        font: 'Calibri',
-                        break: 1,
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 43, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: NO_CELL_BORDERS.right,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 35, bottom: 35, left: 60, right: 40 },
-                children: [
-                  new Paragraph({
-                    tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: sq.orPrompt?.trim() || '',
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                      new TextRun({
-                        text: `\t[${sq.marks}]`,
-                        bold: true,
-                        size: 17,
-                        color: '475569',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-            ],
-          }),
-      );
+    const buildSubjectiveOrTable = (
+      col1Label: string,
+      items: SubjectiveQuestion[],
+      getLabel: (idx: number) => string,
+      rowVerticalMargin: number,
+    ): Table => {
+      const hdrBorder = {
+        top: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        bottom: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        left: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+        right: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+      };
 
+      const makeSubHdrCell = (text: string, widthPct: number, centered = true) =>
+        new TableCell({
+          width: { size: widthPct, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+          verticalAlign: VerticalAlign.CENTER,
+          borders: hdrBorder,
+          margins: { top: 35, bottom: 35, left: 40, right: 40 },
+          children: [
+            new Paragraph({
+              alignment: centered ? AlignmentType.CENTER : AlignmentType.LEFT,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text,
+                  bold: true,
+                  size: 15,
+                  color: '1E293B',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+          ],
+        });
+
+      const headerRow = new TableRow({
+        tableHeader: true,
+        cantSplit: true,
+        children: [
+          makeSubHdrCell(col1Label, 7, true),
+          makeSubHdrCell('QUESTIONS', 40, false),
+          makeSubHdrCell('OR', 7, true),
+          makeSubHdrCell('ALTERNATIVE QUESTION', 38, false),
+          makeSubHdrCell('MARKS', 8, true),
+        ],
+      });
+
+      const bodyRows = items.map((item, idx) => {
+        const leftRtl = isRtlSubject || hasRtlScript(item.prompt);
+        const rightRtl = isRtlSubject || hasRtlScript(item.orPrompt);
+        const rowBorders = {
+          top: NO_CELL_BORDERS.top,
+          bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+        };
+
+        return new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              width: { size: 7, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              borders: {
+                ...rowBorders,
+                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: rowVerticalMargin, bottom: rowVerticalMargin, left: 20, right: 20 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: getLabel(idx),
+                      bold: true,
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 40, type: WidthType.PERCENTAGE },
+              borders: rowBorders,
+              margins: { top: rowVerticalMargin, bottom: rowVerticalMargin, left: 55, right: 55 },
+              children: [
+                new Paragraph({
+                  bidirectional: leftRtl,
+                  alignment: leftRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: item.prompt,
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: leftRtl ? 'Tahoma' : 'Calibri',
+                      rightToLeft: leftRtl,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 7, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              verticalAlign: VerticalAlign.CENTER,
+              borders: rowBorders,
+              margins: { top: rowVerticalMargin, bottom: rowVerticalMargin, left: 15, right: 15 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: item.orPrompt?.trim() ? 'OR' : '—',
+                      bold: true,
+                      size: 16,
+                      color: '475569',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 38, type: WidthType.PERCENTAGE },
+              borders: rowBorders,
+              margins: { top: rowVerticalMargin, bottom: rowVerticalMargin, left: 55, right: 55 },
+              children: [
+                new Paragraph({
+                  bidirectional: rightRtl,
+                  alignment: rightRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: item.orPrompt?.trim() || '',
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: rightRtl ? 'Tahoma' : 'Calibri',
+                      rightToLeft: rightRtl,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 8, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              verticalAlign: VerticalAlign.CENTER,
+              borders: {
+                ...rowBorders,
+                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: rowVerticalMargin, bottom: rowVerticalMargin, left: 20, right: 20 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: `[${formatMarksBadge(item.marks)}]`,
+                      bold: true,
+                      size: 17,
+                      color: '334155',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        });
+      });
+
+      return new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows: [headerRow, ...bodyRows],
+      });
+    };
+
+    if (sideBySideOr && hasShortOr) {
       children.push(
-        new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          layout: TableLayoutType.FIXED,
-          rows: shortTableRows,
-        }),
+        buildSubjectiveOrTable('PART', shortQuestions, (idx) => formatRomanPart(idx), 35),
       );
     } else {
       shortQuestions.forEach((sq, idx) => {
+        const rowRtl = isRtlSubject || hasRtlScript(sq.prompt) || hasRtlScript(sq.orPrompt);
         children.push(
           new Paragraph({
+            bidirectional: rowRtl,
+            alignment: rowRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
             tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
             keepNext: Boolean(sq.orPrompt?.trim()),
             spacing: { before: compactLayout ? 35 : 80, after: sq.orPrompt?.trim() ? 15 : 50 },
@@ -1710,10 +2322,11 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 text: sq.prompt,
                 size: qFontSize,
                 color: '0F172A',
-                font: 'Calibri',
+                font: rowRtl ? 'Tahoma' : 'Calibri',
+                rightToLeft: rowRtl,
               }),
               new TextRun({
-                text: `\t[${sq.marks} Marks]`,
+                text: `\t[${formatMarksBadge(sq.marks)} Marks]`,
                 bold: true,
                 size: 17,
                 color: '475569',
@@ -1742,6 +2355,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           );
           children.push(
             new Paragraph({
+              bidirectional: rowRtl,
+              alignment: rowRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
               indent: { left: convertInchesToTwip(0.3) },
               spacing: { before: 0, after: 45 },
               children: [
@@ -1749,7 +2364,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                   text: sq.orPrompt.trim(),
                   size: qFontSize,
                   color: '0F172A',
-                  font: 'Calibri',
+                  font: rowRtl ? 'Tahoma' : 'Calibri',
+                  rightToLeft: rowRtl,
                 }),
               ],
             }),
@@ -1801,137 +2417,193 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
     );
 
     if (sideBySideOr && hasLongOr) {
-      const longTableRows = longQuestions.map(
-        (lq, idx) =>
-          new TableRow({
-            cantSplit: true,
-            children: [
-              new TableCell({
-                width: { size: 8, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' },
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 40, bottom: 40, left: 20, right: 30 },
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: `Q.${longStartNum + idx}`,
-                        bold: true,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 40, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: NO_CELL_BORDERS.right,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 40, bottom: 40, left: 50, right: 50 },
-                children: [
-                  new Paragraph({
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: lq.prompt,
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 9, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 40, bottom: 40, left: 15, right: 15 },
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: lq.orPrompt?.trim() ? 'OR' : '—',
-                        bold: true,
-                        size: 16,
-                        color: '475569',
-                        font: 'Calibri',
-                      }),
-                      new TextRun({
-                        text: `[${lq.marks}]`,
-                        size: 15,
-                        color: '64748B',
-                        font: 'Calibri',
-                        break: 1,
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 43, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: NO_CELL_BORDERS.top,
-                  left: NO_CELL_BORDERS.left,
-                  right: NO_CELL_BORDERS.right,
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-                },
-                margins: { top: 40, bottom: 40, left: 60, right: 40 },
-                children: [
-                  new Paragraph({
-                    tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new TextRun({
-                        text: lq.orPrompt?.trim() || '',
-                        size: qFontSize,
-                        color: '0F172A',
-                        font: 'Calibri',
-                      }),
-                      new TextRun({
-                        text: `\t[${lq.marks}]`,
-                        bold: true,
-                        size: 17,
-                        color: '475569',
-                        font: 'Calibri',
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-            ],
-          }),
-      );
+      const hdrBorder = {
+        top: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        bottom: { style: BorderStyle.SINGLE, size: 6, color: '475569' },
+        left: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+        right: { style: BorderStyle.SINGLE, size: 4, color: '64748B' },
+      };
+
+      const makeLongHdrCell = (text: string, widthPct: number, centered = true) =>
+        new TableCell({
+          width: { size: widthPct, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+          verticalAlign: VerticalAlign.CENTER,
+          borders: hdrBorder,
+          margins: { top: 35, bottom: 35, left: 40, right: 40 },
+          children: [
+            new Paragraph({
+              alignment: centered ? AlignmentType.CENTER : AlignmentType.LEFT,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text,
+                  bold: true,
+                  size: 15,
+                  color: '1E293B',
+                  font: 'Calibri',
+                }),
+              ],
+            }),
+          ],
+        });
+
+      const longHeaderRow = new TableRow({
+        tableHeader: true,
+        cantSplit: true,
+        children: [
+          makeLongHdrCell('Q.#', 7, true),
+          makeLongHdrCell('QUESTIONS', 40, false),
+          makeLongHdrCell('OR', 7, true),
+          makeLongHdrCell('ALTERNATIVE QUESTION', 38, false),
+          makeLongHdrCell('MARKS', 8, true),
+        ],
+      });
+
+      const longTableRows = longQuestions.map((lq, idx) => {
+        const leftRtl = isRtlSubject || hasRtlScript(lq.prompt);
+        const rightRtl = isRtlSubject || hasRtlScript(lq.orPrompt);
+        const rowBorders = {
+          top: NO_CELL_BORDERS.top,
+          bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+          right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+        };
+
+        return new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              width: { size: 7, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              borders: {
+                ...rowBorders,
+                left: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: 40, bottom: 40, left: 20, right: 20 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: `Q.${longStartNum + idx}`,
+                      bold: true,
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 40, type: WidthType.PERCENTAGE },
+              borders: rowBorders,
+              margins: { top: 40, bottom: 40, left: 55, right: 55 },
+              children: [
+                new Paragraph({
+                  bidirectional: leftRtl,
+                  alignment: leftRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: lq.prompt,
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: leftRtl ? 'Tahoma' : 'Calibri',
+                      rightToLeft: leftRtl,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 7, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              verticalAlign: VerticalAlign.CENTER,
+              borders: rowBorders,
+              margins: { top: 40, bottom: 40, left: 15, right: 15 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: lq.orPrompt?.trim() ? 'OR' : '—',
+                      bold: true,
+                      size: 16,
+                      color: '475569',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 38, type: WidthType.PERCENTAGE },
+              borders: rowBorders,
+              margins: { top: 40, bottom: 40, left: 55, right: 55 },
+              children: [
+                new Paragraph({
+                  bidirectional: rightRtl,
+                  alignment: rightRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: lq.orPrompt?.trim() || '',
+                      size: qFontSize,
+                      color: '0F172A',
+                      font: rightRtl ? 'Tahoma' : 'Calibri',
+                      rightToLeft: rightRtl,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              width: { size: 8, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+              verticalAlign: VerticalAlign.CENTER,
+              borders: {
+                ...rowBorders,
+                right: { style: BorderStyle.SINGLE, size: 6, color: '64748B' },
+              },
+              margins: { top: 40, bottom: 40, left: 20, right: 20 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { before: 0, after: 0 },
+                  children: [
+                    new TextRun({
+                      text: `[${formatMarksBadge(lq.marks)}]`,
+                      bold: true,
+                      size: 17,
+                      color: '334155',
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        });
+      });
 
       children.push(
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
           layout: TableLayoutType.FIXED,
-          rows: longTableRows,
+          rows: [longHeaderRow, ...longTableRows],
         }),
       );
     } else {
       longQuestions.forEach((lq, idx) => {
+        const rowRtl = isRtlSubject || hasRtlScript(lq.prompt) || hasRtlScript(lq.orPrompt);
         children.push(
           new Paragraph({
+            bidirectional: rowRtl,
+            alignment: rowRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
             tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
             keepNext: Boolean(lq.orPrompt?.trim()),
             spacing: { before: compactLayout ? 40 : 90, after: lq.orPrompt?.trim() ? 15 : 65 },
@@ -1947,10 +2619,11 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                 text: lq.prompt,
                 size: qFontSize,
                 color: '0F172A',
-                font: 'Calibri',
+                font: rowRtl ? 'Tahoma' : 'Calibri',
+                rightToLeft: rowRtl,
               }),
               new TextRun({
-                text: `\t[${lq.marks} Marks]`,
+                text: `\t[${formatMarksBadge(lq.marks)} Marks]`,
                 bold: true,
                 size: 17,
                 color: '475569',
@@ -1979,6 +2652,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
           );
           children.push(
             new Paragraph({
+              bidirectional: rowRtl,
+              alignment: rowRtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
               indent: { left: convertInchesToTwip(0.3) },
               spacing: { before: 0, after: 65 },
               children: [
@@ -1986,7 +2661,8 @@ export async function exportPaperToWord(input: WordPaperExportInput): Promise<vo
                   text: lq.orPrompt.trim(),
                   size: qFontSize,
                   color: '0F172A',
-                  font: 'Calibri',
+                  font: rowRtl ? 'Tahoma' : 'Calibri',
+                  rightToLeft: rowRtl,
                 }),
               ],
             }),

@@ -7,6 +7,9 @@ import {
   Download,
   Eye,
   FilePlus2,
+  FileText,
+  Layers,
+  Lock,
   LogOut,
   PauseCircle,
   PlayCircle,
@@ -38,10 +41,13 @@ import {
   releaseAttemptResult,
   revokeAdminAccess,
   saveSystemSettings,
+  toggleStudentAnswerKeyReview,
   toggleTeacherPaperCreation,
   toggleTestActiveStatus,
   updateAccountApproval,
+  updateAccountClass,
   updateTestDeliveryOverride,
+  toggleAttemptAnswerKeyRelease,
 } from '../services/mcqService';
 import {
   AccountStatus,
@@ -55,12 +61,22 @@ import {
   TestDeliveryOverride,
   UserAccount,
   UserRole,
+  getAttemptBreakdown,
+  isSingleStudentGrade,
 } from '../types';
 import { TestGeneratorPanel } from './TestGeneratorPanel';
 import { TestRunner } from './TestRunner';
 import { PrintablePaperModal } from './PrintablePaperModal';
 import { ScheduleAccessModal } from './ScheduleAccessModal';
+import { StudentRecordModal } from './StudentRecordModal';
+import { PlatformBrochureModal } from './PlatformBrochureModal';
+import { ClassDeploymentsModal } from './ClassDeploymentsModal';
 import { DeveloperFooter } from './DeveloperFooter';
+import { getActiveEditionClass, getClassPathSlug } from '../config/appEdition';
+import {
+  buildStudentPerformanceReport,
+  getEffectiveTestEndMs,
+} from '../utils/studentRecord';
 
 function parseTimestampMs(value: unknown): number | null {
   if (!value) return null;
@@ -85,6 +101,8 @@ function parseTimestampMs(value: unknown): number | null {
 
 export function AdminDashboard() {
   const { firebaseUser, userProfile, isMainAdmin, systemSettings, logout } = useAuth();
+  const activeEdition = getActiveEditionClass();
+  const isSingleClassEdition = activeEdition !== 'All';
   const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'tests' | 'results'>('users');
 
   const [users, setUsers] = useState<UserAccount[]>([]);
@@ -93,9 +111,13 @@ export function AdminDashboard() {
 
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all');
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
-  const [userClassFilter, setUserClassFilter] = useState<GradeLevel | 'All'>('All');
+  const [userClassFilter, setUserClassFilter] = useState<GradeLevel | 'All'>(
+    isSingleClassEdition ? activeEdition : 'All',
+  );
 
-  const [resultsClassFilter, setResultsClassFilter] = useState<GradeLevel | 'All'>('All');
+  const [resultsClassFilter, setResultsClassFilter] = useState<GradeLevel | 'All'>(
+    isSingleClassEdition ? activeEdition : 'All',
+  );
   const [resultsTestFilter, setResultsTestFilter] = useState<string>('all');
   const [resultsAttendanceFilter, setResultsAttendanceFilter] = useState<
     'all' | 'present' | 'absent' | 'cancelled'
@@ -108,7 +130,11 @@ export function AdminDashboard() {
   const [allowTeacherPaperCreation, setAllowTeacherPaperCreation] = useState<boolean>(
     systemSettings.allowTeacherPaperCreation !== false,
   );
+  const [allowStudentAnswerKeyReview, setAllowStudentAnswerKeyReview] = useState<boolean>(
+    systemSettings.allowStudentAnswerKeyReview === true,
+  );
   const [togglingTeacherPapers, setTogglingTeacherPapers] = useState(false);
+  const [togglingAnswerKeys, setTogglingAnswerKeys] = useState(false);
   const [defaultTimeLimitMinutes, setDefaultTimeLimitMinutes] = useState<number>(
     systemSettings.defaultTimeLimitMinutes,
   );
@@ -125,6 +151,9 @@ export function AdminDashboard() {
     initialActive?: boolean;
     expiredNotice?: boolean;
   } | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [showBrochureModal, setShowBrochureModal] = useState(false);
+  const [showClassDeploymentsModal, setShowClassDeploymentsModal] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
 
@@ -132,6 +161,7 @@ export function AdminDashboard() {
     setResultMode(systemSettings.resultMode);
     setTestAccessMode(systemSettings.testAccessMode);
     setAllowTeacherPaperCreation(systemSettings.allowTeacherPaperCreation !== false);
+    setAllowStudentAnswerKeyReview(systemSettings.allowStudentAnswerKeyReview === true);
     setDefaultTimeLimitMinutes(systemSettings.defaultTimeLimitMinutes);
     setPassingPercentage(systemSettings.passingPercentage);
   }, [systemSettings]);
@@ -217,7 +247,7 @@ export function AdminDashboard() {
 
     conductedTests.forEach((t) => {
       if (!t.isActive) return;
-      const endMs = parseTimestampMs(t.scheduledEndAt);
+      const endMs = getEffectiveTestEndMs(t);
       if (endMs === null || nowMs <= endMs) return;
 
       const allowed =
@@ -228,7 +258,7 @@ export function AdminDashboard() {
 
       approvedStudents.forEach((student) => {
         const stuGrade = String(student.grade).trim();
-        const matchesClass = stuGrade === 'All' || normalizedAllowed.has(stuGrade);
+        const matchesClass = isSingleStudentGrade(stuGrade) && normalizedAllowed.has(stuGrade);
         if (!matchesClass) return;
         if (attemptedPairKeys.has(`${t.id}__${student.uid}`)) return;
 
@@ -264,6 +294,12 @@ export function AdminDashboard() {
     ).length;
   }, [approvedStudents, userClassFilter]);
 
+  const studentsNeedingSingleClassCount = useMemo(
+    () =>
+      users.filter((u) => u.role === 'student' && !isSingleStudentGrade(u.grade)).length,
+    [users],
+  );
+
   const resultsTestsDropdownOptions = useMemo(() => {
     if (resultsClassFilter === 'All') return conductedTests;
     return conductedTests.filter((t) => {
@@ -292,7 +328,7 @@ export function AdminDashboard() {
             const set = new Set(allowed.map((g) => String(g).trim()));
             return approvedStudents.filter((s) => {
               const sg = String(s.grade).trim();
-              const matchesTest = sg === 'All' || set.has(sg);
+              const matchesTest = isSingleStudentGrade(sg) && set.has(sg);
               const matchesClassFilter =
                 resultsClassFilter === 'All' || sg === resultsClassFilter;
               return matchesTest && matchesClassFilter;
@@ -308,7 +344,7 @@ export function AdminDashboard() {
       resultsTestFilter === 'all' ? true : t.id === resultsTestFilter,
     );
     const closedTestsCount = matchingTests.filter((t) => {
-      const endMs = parseTimestampMs(t.scheduledEndAt);
+      const endMs = getEffectiveTestEndMs(t);
       return t.isActive && endMs !== null && nowMs > endMs;
     }).length;
 
@@ -427,6 +463,30 @@ export function AdminDashboard() {
     resultsAttendanceFilter,
   ]);
 
+  const selectedStudentReport = useMemo(() => {
+    if (!selectedStudentId) return null;
+    const matchedUser = users.find((u) => u.uid === selectedStudentId);
+    const fallbackAttempt = attempts.find((a) => a.studentId === selectedStudentId);
+    const studentInfo = matchedUser ?? (fallbackAttempt
+      ? {
+          uid: fallbackAttempt.studentId,
+          fullName: fallbackAttempt.studentName,
+          email: '',
+          grade: fallbackAttempt.grade,
+          identifier: fallbackAttempt.studentIdentifier,
+        }
+      : null);
+    if (!studentInfo) return null;
+
+    return buildStudentPerformanceReport({
+      student: studentInfo,
+      allAttempts: attempts,
+      conductedTests,
+      includeHeldScores: true,
+      nowMs,
+    });
+  }, [selectedStudentId, users, attempts, conductedTests, nowMs]);
+
   async function handleSaveSettings(e: React.FormEvent) {
     e.preventDefault();
     if (!firebaseUser) return;
@@ -439,6 +499,7 @@ export function AdminDashboard() {
           testAccessMode,
           allowStudentInstantPractice: false,
           allowTeacherPaperCreation,
+          allowStudentAnswerKeyReview,
           defaultTimeLimitMinutes,
           passingPercentage,
         },
@@ -461,6 +522,17 @@ export function AdminDashboard() {
     }
   }
 
+  async function handleQuickToggleAnswerKeys() {
+    if (!firebaseUser || togglingAnswerKeys) return;
+    setTogglingAnswerKeys(true);
+    try {
+      const nextAllowed = systemSettings.allowStudentAnswerKeyReview !== true;
+      await toggleStudentAnswerKeyReview(nextAllowed, firebaseUser.uid, systemSettings);
+    } finally {
+      setTogglingAnswerKeys(false);
+    }
+  }
+
   async function handleReleaseAllPending() {
     if (!firebaseUser) return;
     const pending = attempts.filter((a) => !a.resultReleased);
@@ -475,11 +547,18 @@ export function AdminDashboard() {
     setDownloadingZip(true);
     try {
       const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/admin/export-zip', {
-        headers: {
-          Authorization: `Bearer ${idToken}`,
+      const classQuery =
+        activeEdition === 'All'
+          ? 'all'
+          : getClassPathSlug(activeEdition).replace(/^\//, '');
+      const response = await fetch(
+        `/api/admin/export-zip?class=${encodeURIComponent(classQuery)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
         },
-      });
+      );
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || 'Failed to download project ZIP.');
@@ -488,7 +567,10 @@ export function AdminDashboard() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = 'meritexam-fbise-nbf.zip';
+      anchor.download =
+        activeEdition === 'All'
+          ? 'meritexam-complete-all-classes.zip'
+          : `meritexam-${classQuery}.zip`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -533,6 +615,11 @@ export function AdminDashboard() {
           <div className="font-display text-base sm:text-lg font-bold text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-amber-500 to-orange-600 shrink-0" />
             <span>MeritExam Admin</span>
+            {isSingleClassEdition && (
+              <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
+                {activeEdition}
+              </span>
+            )}
             {isMainAdmin && (
               <span className="hidden sm:inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 rounded">
                 Main Admin
@@ -694,11 +781,52 @@ export function AdminDashboard() {
             </button>
             <button
               type="button"
+              disabled={togglingAnswerKeys}
+              onClick={() => void handleQuickToggleAnswerKeys()}
+              className={`px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors disabled:opacity-60 border ${
+                systemSettings.allowStudentAnswerKeyReview === true
+                  ? 'bg-emerald-700 hover:bg-emerald-800 border-emerald-700 text-white'
+                  : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-300 text-indigo-800'
+              }`}
+              title="Permit or lock read-only Answer Key review for students on papers they have already given"
+            >
+              {systemSettings.allowStudentAnswerKeyReview === true ? (
+                <>
+                  <Eye className="w-4 h-4" />
+                  Lock Answer Key Review
+                </>
+              ) : (
+                <>
+                  <Lock className="w-4 h-4" />
+                  Allow Answer Key Review
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('settings')}
               className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-teal-800 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
             >
               <Settings className="w-4 h-4" />
               Exam Mode
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBrochureModal(true)}
+              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+              title="View and copy complete English & Urdu website description and capacity details"
+            >
+              <FileText className="w-4 h-4" />
+              App Description &amp; Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowClassDeploymentsModal(true)}
+              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-purple-800 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+              title="Get 4 separate class links & ZIPs (9th, 10th, 1st Year, 2nd Year) + 1 Complete All-Classes ZIP"
+            >
+              <Layers className="w-4 h-4" />
+              5 Links &amp; ZIPs
             </button>
             <button
               type="button"
@@ -825,6 +953,19 @@ export function AdminDashboard() {
               </div>
             </div>
 
+            {studentsNeedingSingleClassCount > 0 && (
+              <div className="mx-6 mt-4 p-3.5 rounded-lg bg-amber-50 border border-amber-300 flex items-start gap-2.5 text-xs text-amber-950">
+                <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">
+                    {studentsNeedingSingleClassCount} legacy student account
+                    {studentsNeedingSingleClassCount > 1 ? 's' : ''} currently set to All Classes:
+                  </span>{' '}
+                  Student accounts are restricted to a single class. Affected students will be prompted to select one class upon sign-in, or you can assign their class directly in the table below.
+                </div>
+              </div>
+            )}
+
             {filteredUsers.length === 0 ? (
               <div className="p-10 text-center text-sm text-slate-500">
                 No accounts match the selected filters.
@@ -850,8 +991,27 @@ export function AdminDashboard() {
                       return (
                       <tr key={account.uid} className="hover:bg-slate-50">
                         <td className="py-3 px-4">
-                          <div className="font-medium text-slate-900">{account.fullName}</div>
-                          <div className="text-xs text-slate-500">{account.email}</div>
+                          {account.role === 'student' ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedStudentId(account.uid)}
+                              className="text-left group cursor-pointer"
+                              title="Click to view full student test record & overall percentage"
+                            >
+                              <div className="font-semibold text-blue-800 group-hover:underline inline-flex items-center gap-1.5">
+                                <span>{account.fullName}</span>
+                                <span className="text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                                  Record
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500">{account.email}</div>
+                            </button>
+                          ) : (
+                            <>
+                              <div className="font-medium text-slate-900">{account.fullName}</div>
+                              <div className="text-xs text-slate-500">{account.email}</div>
+                            </>
+                          )}
                         </td>
                         <td className="py-3 px-4 capitalize font-medium text-slate-800">
                           {isAccountMainAdmin ? (
@@ -867,7 +1027,45 @@ export function AdminDashboard() {
                           )}
                         </td>
                         <td className="py-3 px-4 text-slate-600">
-                          {account.grade} · {account.subject}
+                          {account.role === 'student' ? (
+                            <div className="space-y-1">
+                              <select
+                                value={isSingleStudentGrade(account.grade) ? account.grade : ''}
+                                aria-label={`Assigned class for ${account.fullName}`}
+                                onChange={(e) => {
+                                  const nextGrade = e.target.value as GradeLevel;
+                                  if (isSingleStudentGrade(nextGrade)) {
+                                    void updateAccountClass({
+                                      uid: account.uid,
+                                      grade: nextGrade,
+                                      adminUid: firebaseUser.uid,
+                                    });
+                                  }
+                                }}
+                                className={`px-2 py-1 text-xs font-semibold rounded-md border cursor-pointer ${
+                                  isSingleStudentGrade(account.grade)
+                                    ? 'bg-white border-slate-300 text-slate-800'
+                                    : 'bg-amber-50 border-amber-400 text-amber-900'
+                                }`}
+                              >
+                                {!isSingleStudentGrade(account.grade) && (
+                                  <option value="" disabled>
+                                    All Classes — Select Class
+                                  </option>
+                                )}
+                                {GRADES.map((g) => (
+                                  <option key={g} value={g}>
+                                    {g}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="text-[11px] text-slate-500">{account.subject}</div>
+                            </div>
+                          ) : (
+                            <span>
+                              {account.grade} · {account.subject}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4 font-mono text-xs text-slate-700">
                           {account.identifier || '—'}
@@ -898,6 +1096,12 @@ export function AdminDashboard() {
                           {account.role !== 'admin' && account.status !== 'approved' && (
                             <button
                               type="button"
+                              disabled={account.role === 'student' && !isSingleStudentGrade(account.grade)}
+                              title={
+                                account.role === 'student' && !isSingleStudentGrade(account.grade)
+                                  ? 'Assign a single class (9th, 10th, 1st A, or 2nd Year) before approving this student'
+                                  : undefined
+                              }
                               onClick={() =>
                                 void updateAccountApproval({
                                   uid: account.uid,
@@ -906,7 +1110,7 @@ export function AdminDashboard() {
                                   adminUid: firebaseUser.uid,
                                 })
                               }
-                              className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:text-slate-600 disabled:cursor-not-allowed rounded-md inline-flex items-center gap-1 cursor-pointer"
                             >
                               <Check className="w-3.5 h-3.5" /> Approve
                             </button>
@@ -1163,7 +1367,7 @@ export function AdminDashboard() {
             </div>
 
             {/* Additional Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-200 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-200 items-center">
               <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
                 <input
                   type="checkbox"
@@ -1177,6 +1381,23 @@ export function AdminDashboard() {
                   </div>
                   <div className="text-xs text-slate-500">
                     Turn off to immediately stop teachers from creating new papers
+                  </div>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowStudentAnswerKeyReview}
+                  onChange={(e) => setAllowStudentAnswerKeyReview(e.target.checked)}
+                  className="w-4 h-4 accent-emerald-700"
+                />
+                <div>
+                  <div className="text-xs font-semibold text-slate-900">
+                    Allow Students to View Answer Key (Read-Only)
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Keep unchecked to hide all submitted papers from students (marks &amp; record only). Check to allow read-only Answer Key review of given papers.
                   </div>
                 </div>
               </label>
@@ -1236,6 +1457,7 @@ export function AdminDashboard() {
               creatorUid={firebaseUser.uid}
               creatorName={userProfile?.fullName || 'Administrator'}
               creatorRole="admin"
+              lockedGrade={isSingleClassEdition ? activeEdition : undefined}
               systemSettings={systemSettings}
             />
 
@@ -1271,9 +1493,9 @@ export function AdminDashboard() {
                         const permittedClasses =
                           t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
                         const startMs = t.scheduledReleaseAt ? new Date(t.scheduledReleaseAt).getTime() : NaN;
-                        const endMs = t.scheduledEndAt ? new Date(t.scheduledEndAt).getTime() : NaN;
+                        const effectiveEndMs = getEffectiveTestEndMs(t);
                         const now = Date.now();
-                        const isExpired = !Number.isNaN(endMs) && endMs < now;
+                        const isExpired = effectiveEndMs !== null && effectiveEndMs < now;
                         const isScheduled = !Number.isNaN(startMs) && startMs > now;
                         return (
                         <tr key={t.id} className="hover:bg-slate-50">
@@ -1327,9 +1549,9 @@ export function AdminDashboard() {
                                 Starts: {new Date(t.scheduledReleaseAt).toLocaleString()}
                               </div>
                             )}
-                            {t.scheduledEndAt && (
+                            {effectiveEndMs !== null && (
                               <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
-                                Closes: {new Date(t.scheduledEndAt).toLocaleString()}
+                                Closes: {new Date(effectiveEndMs).toLocaleString()}
                               </div>
                             )}
                           </td>
@@ -1559,6 +1781,7 @@ export function AdminDashboard() {
                         <th className="py-3 px-4">Class · Subject</th>
                         <th className="py-3 px-4">Attendance</th>
                         <th className="py-3 px-4">Score</th>
+                        <th className="py-3 px-4">Question Summary</th>
                         <th className="py-3 px-4">Release State</th>
                         <th className="py-3 px-4 text-right">Action</th>
                       </tr>
@@ -1567,13 +1790,23 @@ export function AdminDashboard() {
                       {unifiedResultAttendanceRows.map((row) => {
                         if (row.kind === 'absent') {
                           const { student, test, endMs, totalMarks, key } = row;
+                          const totalQs = test.questionCount || test.questions?.length || 0;
                           return (
                             <tr key={key} className="bg-red-50/30 hover:bg-red-50/60">
                               <td className="py-3 px-4">
-                                <div className="font-medium text-slate-900">{student.fullName}</div>
-                                <div className="text-xs text-slate-500 font-mono">
-                                  {student.identifier || student.uid.slice(0, 8)} · Class {student.grade}
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedStudentId(student.uid)}
+                                  className="text-left group cursor-pointer"
+                                  title="Click to view student's full test record"
+                                >
+                                  <div className="font-semibold text-blue-900 group-hover:underline">
+                                    {student.fullName}
+                                  </div>
+                                  <div className="text-xs text-slate-500 font-mono">
+                                    {student.identifier || student.uid.slice(0, 8)} · Class {student.grade}
+                                  </div>
+                                </button>
                               </td>
                               <td className="py-3 px-4">
                                 <div className="text-slate-900 font-medium">{test.title}</div>
@@ -1593,6 +1826,14 @@ export function AdminDashboard() {
                               <td className="py-3 px-4 tabular-nums font-semibold text-red-700">
                                 0 / {totalMarks} (0%)
                               </td>
+                              <td className="py-3 px-4 text-xs tabular-nums text-slate-600 whitespace-nowrap">
+                                <div>Attempted: <strong className="text-slate-900">0 / {totalQs}</strong></div>
+                                <div className="text-[11px] mt-0.5">
+                                  <span className="text-emerald-700 font-semibold">0 Correct</span> ·{' '}
+                                  <span className="text-red-700 font-semibold">0 Wrong</span> ·{' '}
+                                  <span className="text-amber-700 font-semibold">{totalQs} Left</span>
+                                </div>
+                              </td>
                               <td className="py-3 px-4 text-xs font-semibold text-red-700">
                                 Marked Absent
                               </td>
@@ -1604,13 +1845,23 @@ export function AdminDashboard() {
                         }
 
                         const { attempt: a } = row;
+                        const breakdown = getAttemptBreakdown(a);
                         return (
                           <tr key={a.id} className="hover:bg-slate-50">
                             <td className="py-3 px-4">
-                              <div className="font-medium text-slate-900">{a.studentName}</div>
-                              <div className="text-xs text-slate-500 font-mono">
-                                {a.studentIdentifier || a.studentId.slice(0, 8)}
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedStudentId(a.studentId)}
+                                className="text-left group cursor-pointer"
+                                title="Click to view student's full test record"
+                              >
+                                <div className="font-semibold text-blue-900 group-hover:underline">
+                                  {a.studentName}
+                                </div>
+                                <div className="text-xs text-slate-500 font-mono">
+                                  {a.studentIdentifier || a.studentId.slice(0, 8)}
+                                </div>
+                              </button>
                             </td>
                             <td className="py-3 px-4">
                               <div className="text-slate-800">{a.testTitle}</div>
@@ -1639,6 +1890,22 @@ export function AdminDashboard() {
                             <td className="py-3 px-4 tabular-nums font-semibold text-slate-900">
                               {a.obtainedMarks ?? a.score} / {a.totalMarks ?? a.totalQuestions} ({a.percentage}%)
                             </td>
+                            <td className="py-3 px-4 text-xs tabular-nums text-slate-600 whitespace-nowrap">
+                              {breakdown.total === 0 ? (
+                                <span className="text-slate-500">Subjective Paper</span>
+                              ) : (
+                                <>
+                                  <div>
+                                    Attempted: <strong className="text-slate-900">{breakdown.attempted} / {breakdown.total}</strong>
+                                  </div>
+                                  <div className="text-[11px] mt-0.5">
+                                    <span className="text-emerald-700 font-semibold">{breakdown.correct} Correct</span> ·{' '}
+                                    <span className="text-red-700 font-semibold">{breakdown.wrong} Wrong</span> ·{' '}
+                                    <span className="text-amber-700 font-semibold">{breakdown.skipped} Left</span>
+                                  </div>
+                                </>
+                              )}
+                            </td>
                             <td className="py-3 px-4">
                               <div className="text-[11px] text-slate-500 mb-0.5">
                                 {a.deliveryModeUsed === 'instant' ? 'Option 1: Instant' : 'Option 2: Admin Review'}
@@ -1661,6 +1928,31 @@ export function AdminDashboard() {
                                   className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md cursor-pointer"
                                 >
                                   Release Result
+                                </button>
+                              )}
+                              {!a.autoCancelled && a.resultReleased && (
+                                <button
+                                  type="button"
+                                  disabled={systemSettings.allowStudentAnswerKeyReview === true}
+                                  title={
+                                    systemSettings.allowStudentAnswerKeyReview === true
+                                      ? 'Answer Key review is globally enabled for all students'
+                                      : 'Permit or lock read-only Answer Key view for this student attempt'
+                                  }
+                                  onClick={() =>
+                                    void toggleAttemptAnswerKeyRelease(a.id, !a.answerKeyReleased)
+                                  }
+                                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                                    systemSettings.allowStudentAnswerKeyReview === true || a.answerKeyReleased
+                                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
+                                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {systemSettings.allowStudentAnswerKeyReview === true
+                                    ? 'Key Open (Global)'
+                                    : a.answerKeyReleased
+                                      ? 'Lock Key'
+                                      : 'Allow Key'}
                                 </button>
                               )}
                               {a.autoCancelled && (
@@ -1721,6 +2013,33 @@ export function AdminDashboard() {
             role: 'admin',
           }}
           onClose={() => setSchedulingState(null)}
+        />
+      )}
+
+      {selectedStudentReport && (
+        <StudentRecordModal
+          report={selectedStudentReport}
+          passingPercentage={systemSettings.passingPercentage}
+          globalAnswerKeyEnabled={systemSettings.allowStudentAnswerKeyReview === true}
+          onReleaseAttempt={(attempt) =>
+            releaseAttemptResult(attempt.id, firebaseUser.uid)
+          }
+          onAllowRetake={(attempt) => deleteTestAttempt(attempt.id)}
+          onToggleAnswerKey={(attempt, allow) =>
+            toggleAttemptAnswerKeyRelease(attempt.id, allow)
+          }
+          onClose={() => setSelectedStudentId(null)}
+        />
+      )}
+
+      {showBrochureModal && (
+        <PlatformBrochureModal onClose={() => setShowBrochureModal(false)} />
+      )}
+
+      {showClassDeploymentsModal && (
+        <ClassDeploymentsModal
+          getIdToken={() => firebaseUser.getIdToken()}
+          onClose={() => setShowClassDeploymentsModal(false)}
         />
       )}
     </div>

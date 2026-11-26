@@ -137,6 +137,10 @@
           "type": "boolean",
           "description": "Whether approved teachers are allowed to generate and publish new papers (Admin can pause/resume anytime)."
         },
+        "allowStudentAnswerKeyReview": {
+          "type": "boolean",
+          "description": "Whether students are allowed to view read-only Answer Keys for papers they have already given."
+        },
         "defaultTimeLimitMinutes": {
           "type": "integer",
           "description": "Default MCQ test duration in minutes."
@@ -428,6 +432,10 @@
         "resultReleased": {
           "type": "boolean",
           "description": "True immediately in instant mode; false until released by Admin in admin_review mode."
+        },
+        "answerKeyReleased": {
+          "type": "boolean",
+          "description": "Optional per-attempt Admin permission allowing the student to view the read-only Answer Key."
         },
         "status": {
           "type": "string",

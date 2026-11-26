@@ -1,0 +1,37 @@
+====================================================================
+MERITEXAM DEPLOYMENT GUIDE — COMPLETE ALL-CLASSES (9TH, 10TH, 1ST A & 2ND YEAR)
+====================================================================
+
+EDITION INCLUDED IN THIS ZIP:
+- Locked Class Mode: All (Complete All-Classes (9th, 10th, 1st A & 2nd Year))
+
+STEP 1: UPLOAD TO GITHUB
+1. Create a GitHub repository in your target GitHub account.
+2. Upload all files from this ZIP to the repository (extract first, then push/upload).
+
+STEP 2: DEPLOY FREE ON VERCEL OR NETLIFY
+- Build Command: npm run build
+- Output Directory: dist
+- Install Command: npm install --legacy-peer-deps
+- Environment Variables to add in Vercel / Netlify Settings:
+  1) GEMINI_API_KEY = <your free Google AI Studio Gemini API key>
+  2) Optional override: VITE_APP_CLASS = "All"
+
+STEP 3: CONNECT OWN FREE FIREBASE PROJECT (FOR INDEPENDENT FREE QUOTA)
+1. Create a free Firebase project (Spark Plan) at https://console.firebase.google.com
+2. Enable Authentication -> Google Sign-In.
+3. Add your new Vercel/Netlify custom domain inside:
+   Authentication -> Settings -> Authorized domains.
+4. Create a Cloud Firestore database and deploy the included "firestore.rules" file.
+5. Replace "firebase-applet-config.json" with your new Firebase project's web config
+   (set "firestoreDatabaseId": "(default)" unless using a named database).
+
+====================================================================
+اردو رہنمائی (URDU GUIDE)
+====================================================================
+یہ ZIP فائل خاص طور پر "Complete All-Classes (9th, 10th, 1st A & 2nd Year)" کے لیے تیار کی گئی ہے۔
+1. اس کو اپنے علیحدہ GitHub اکاؤنٹ میں اپ لوڈ کریں۔
+2. Vercel یا Netlify پر فری Deploy کریں اور Environment Variables میں اپنا GEMINI_API_KEY شامل کریں۔
+3. مکمل الگ فری Firebase حد (50k Reads / 20k Writes روزانہ) کے لیے نیا فری Firebase پروجیکٹ بنائیں،
+   Google Login آن کریں، اپنا نیا ڈومین Authorized Domains میں ایڈ کریں، اور firebase-applet-config.json تبدیل کریں۔
+====================================================================

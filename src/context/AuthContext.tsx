@@ -28,6 +28,7 @@ import {
   SubjectName,
   SystemSettings,
   UserAccount,
+  isSingleStudentGrade,
 } from '../types';
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
@@ -35,6 +36,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   testAccessMode: 'instant_open',
   allowStudentInstantPractice: true,
   allowTeacherPaperCreation: true,
+  allowStudentAnswerKeyReview: false,
   defaultTimeLimitMinutes: 15,
   passingPercentage: 50,
   updatedBy: '',
@@ -59,6 +61,7 @@ interface AuthContextValue {
   systemSettings: SystemSettings;
   signInWithGoogle: () => Promise<User>;
   registerRoleAccount: (payload: RegisterPayload) => Promise<UserAccount>;
+  updateOwnStudentClass: (grade: GradeLevel) => Promise<void>;
   ensureBootstrappedAdmin: (user: User) => Promise<boolean>;
   logout: () => Promise<void>;
 }
@@ -254,6 +257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           testAccessMode: 'instant_open',
           allowStudentInstantPractice: true,
           allowTeacherPaperCreation: true,
+          allowStudentAnswerKeyReview: false,
           defaultTimeLimitMinutes: 15,
           passingPercentage: 50,
           updatedBy: user.uid,
@@ -281,6 +285,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return existingSnap.data() as UserAccount;
     }
 
+    if (payload.role === 'student' && !isSingleStudentGrade(payload.grade)) {
+      throw new Error(
+        'Student accounts must select a single enrolled class (9th, 10th, 1st A, or 2nd Year). All Classes is not permitted for students.',
+      );
+    }
+
     const cleanName = payload.fullName.trim().slice(0, MAX_NAME_LENGTH);
     const cleanIdentifier = payload.identifier.trim().slice(0, MAX_IDENTIFIER_LENGTH);
 
@@ -306,6 +316,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return newAccount;
   }
 
+  async function updateOwnStudentClass(grade: GradeLevel): Promise<void> {
+    if (!isSingleStudentGrade(grade)) {
+      throw new Error('Please select a single valid class (9th, 10th, 1st A, or 2nd Year).');
+    }
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('You must be signed in to update your class.');
+    }
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        grade,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+    }
+  }
+
   async function logout(): Promise<void> {
     await signOut(auth);
   }
@@ -323,6 +351,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         systemSettings,
         signInWithGoogle,
         registerRoleAccount,
+        updateOwnStudentClass,
         ensureBootstrappedAdmin,
         logout,
       }}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -11,12 +11,18 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
+  getActiveEditionClass,
+  getClassPathSlug,
+  isBuildLockedEdition,
+} from '../config/appEdition';
+import {
   GRADES,
   GRADE_LABELS,
   GradeLevel,
   SUBJECT_GROUPS,
   SubjectName,
   UserRole,
+  isSingleStudentGrade,
 } from '../types';
 import { DeveloperFooter } from './DeveloperFooter';
 
@@ -41,22 +47,45 @@ export function RoleAuthPortal({
     isPausedAdmin,
     signInWithGoogle,
     registerRoleAccount,
+    updateOwnStudentClass,
     ensureBootstrappedAdmin,
     logout,
   } = useAuth();
+
+  const activeEdition = getActiveEditionClass();
+  const buildLocked = isBuildLockedEdition();
+  const isSingleClassEdition = activeEdition !== 'All';
 
   const [mode, setMode] = useState<'login' | 'register'>(
     portalRole === 'admin' ? 'login' : initialMode,
   );
   const [fullName, setFullName] = useState('');
   const [grade, setGrade] = useState<GradeLevel | 'All'>(
-    portalRole === 'teacher' ? 'All' : '9th',
+    isSingleClassEdition ? activeEdition : portalRole === 'teacher' ? 'All' : '9th',
   );
+  const [pendingClassChoice, setPendingClassChoice] = useState<GradeLevel>(
+    isSingleClassEdition ? activeEdition : '9th',
+  );
+  const [savingPendingClass, setSavingPendingClass] = useState(false);
+  const [pendingClassError, setPendingClassError] = useState<string | null>(null);
   const [subject, setSubject] = useState<SubjectName | 'All'>('Physics');
   const [identifier, setIdentifier] = useState('');
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isSingleClassEdition) {
+      setGrade(activeEdition);
+      setPendingClassChoice(activeEdition);
+      return;
+    }
+    if (portalRole === 'student' && !isSingleStudentGrade(grade)) {
+      setGrade('9th');
+    } else if (portalRole === 'teacher' && grade !== 'All') {
+      setGrade('All');
+    }
+  }, [portalRole, isSingleClassEdition, activeEdition]);
 
   const roleTitle =
     portalRole === 'student'
@@ -114,13 +143,20 @@ export function RoleAuthPortal({
       return;
     }
 
+    if (portalRole === 'student' && !isSingleStudentGrade(grade)) {
+      setErrorMsg(
+        'Students must select one specific enrolled class (9th, 10th, 1st A, or 2nd Year). All Classes is not permitted for student accounts.',
+      );
+      return;
+    }
+
     setBusy(true);
     try {
       const user = firebaseUser ?? (await signInWithGoogle());
       const account = await registerRoleAccount({
         role: portalRole,
         fullName: cleanName || user.displayName || 'Applicant',
-        grade,
+        grade: portalRole === 'student' ? (isSingleStudentGrade(grade) ? grade : '9th') : grade,
         subject,
         identifier: identifier.trim(),
       });
@@ -244,6 +280,65 @@ export function RoleAuthPortal({
                   </div>
                 </div>
 
+                {userProfile.role === 'student' && !isSingleStudentGrade(userProfile.grade) && (
+                  <div className="mt-5 p-4 rounded-lg bg-amber-50 border border-amber-300 space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold text-amber-950">
+                          Single Class Selection Required
+                        </p>
+                        <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
+                          Student accounts cannot remain on All Classes. Select your enrolled class below before approval.
+                        </p>
+                      </div>
+                    </div>
+
+                    {pendingClassError && (
+                      <p className="text-xs font-medium text-red-700">{pendingClassError}</p>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <select
+                        value={pendingClassChoice}
+                        onChange={(e) => setPendingClassChoice(e.target.value as GradeLevel)}
+                        aria-label="Select your enrolled class"
+                        className="flex-1 px-3 py-2 text-xs font-medium bg-white border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      >
+                        {isSingleClassEdition ? (
+                          <option value={activeEdition}>{GRADE_LABELS[activeEdition]}</option>
+                        ) : (
+                          GRADES.map((g) => (
+                            <option key={g} value={g}>
+                              {GRADE_LABELS[g]}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={savingPendingClass}
+                        onClick={async () => {
+                          setPendingClassError(null);
+                          setSavingPendingClass(true);
+                          try {
+                            await updateOwnStudentClass(pendingClassChoice);
+                          } catch (err) {
+                            setPendingClassError(
+                              err instanceof Error ? err.message : 'Unable to save class.',
+                            );
+                          } finally {
+                            setSavingPendingClass(false);
+                          }
+                        }}
+                        className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg cursor-pointer whitespace-nowrap"
+                      >
+                        {savingPendingClass ? 'Saving...' : 'Save Class'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-6 flex items-center justify-between gap-3">
                   <button
                     type="button"
@@ -293,6 +388,59 @@ export function RoleAuthPortal({
                     type="button"
                     onClick={() => void logout()}
                     className="px-4 py-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DeveloperFooter />
+        </div>
+      );
+    }
+
+    // Cross-class mismatch on a single-class portal link/domain
+    if (
+      isSingleClassEdition &&
+      userProfile.role === 'student' &&
+      isSingleStudentGrade(userProfile.grade) &&
+      userProfile.grade !== activeEdition
+    ) {
+      const ownClassSlug = getClassPathSlug(userProfile.grade);
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-teal-50/40 flex flex-col">
+          <TopBar onBack={onBack} portalRole={portalRole} onSwitchPortal={onSwitchPortal} />
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-lg w-full shadow-sm">
+              <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 to-blue-600" />
+              <div className="p-8">
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertCircle className="w-6 h-6 text-amber-600 shrink-0" />
+                  <h2 className="font-display text-xl font-bold text-slate-900">
+                    Dedicated {GRADE_LABELS[activeEdition]} Portal
+                  </h2>
+                </div>
+                <p className="text-sm text-slate-600 leading-relaxed mb-6">
+                  This portal is strictly for{' '}
+                  <span className="font-semibold text-slate-900">{GRADE_LABELS[activeEdition]}</span>{' '}
+                  students. Your account ({userProfile.email}) is registered in{' '}
+                  <span className="font-semibold text-blue-800">{GRADE_LABELS[userProfile.grade]}</span>.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  {!buildLocked && (
+                    <a
+                      href={ownClassSlug}
+                      className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors"
+                    >
+                      Open {userProfile.grade} Portal
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void logout()}
+                    className="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg transition-colors inline-flex items-center gap-2 cursor-pointer"
                   >
                     <LogOut className="w-4 h-4" />
                     Sign Out
@@ -508,17 +656,41 @@ export function RoleAuthPortal({
                       {portalRole === 'student' ? 'Enrolled Class' : 'Teaching Class Focus'}
                     </label>
                     <select
-                      value={grade}
+                      value={
+                        isSingleClassEdition
+                          ? activeEdition
+                          : portalRole === 'student' && !isSingleStudentGrade(grade)
+                            ? '9th'
+                            : grade
+                      }
+                      disabled={isSingleClassEdition}
                       onChange={(e) => setGrade(e.target.value as GradeLevel | 'All')}
-                      className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-700"
                     >
-                      {GRADES.map((g) => (
-                        <option key={g} value={g}>
-                          {GRADE_LABELS[g]}
-                        </option>
-                      ))}
-                      {portalRole === 'teacher' && <option value="All">All Classes (9th, 10th, 1st A, 2nd Year)</option>}
+                      {isSingleClassEdition ? (
+                        <option value={activeEdition}>{GRADE_LABELS[activeEdition]}</option>
+                      ) : (
+                        <>
+                          {GRADES.map((g) => (
+                            <option key={g} value={g}>
+                              {GRADE_LABELS[g]}
+                            </option>
+                          ))}
+                          {portalRole === 'teacher' && (
+                            <option value="All">All Classes (9th, 10th, 1st A, 2nd Year)</option>
+                          )}
+                        </>
+                      )}
                     </select>
+                    {isSingleClassEdition ? (
+                      <p className="text-[11px] text-blue-700 font-medium mt-1">
+                        Locked to {GRADE_LABELS[activeEdition]} on this portal.
+                      </p>
+                    ) : portalRole === 'student' ? (
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Each student account is restricted to one enrolled class only.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div>
@@ -590,6 +762,7 @@ function TopBar({
   portalRole: UserRole;
   onSwitchPortal: (role: UserRole) => void;
 }) {
+  const activeEdition = getActiveEditionClass();
   return (
     <header className="bg-white border-b border-slate-200">
       <div className="h-1 w-full bg-gradient-to-r from-blue-600 via-teal-500 to-amber-500" />
@@ -600,7 +773,12 @@ function TopBar({
           className="inline-flex items-center gap-2 text-sm font-bold text-slate-800 hover:text-blue-700 whitespace-nowrap shrink-0 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          MeritExam
+          <span>MeritExam</span>
+          {activeEdition !== 'All' && (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
+              {activeEdition}
+            </span>
+          )}
         </button>
 
         <nav className="flex items-center gap-5 text-sm font-medium">

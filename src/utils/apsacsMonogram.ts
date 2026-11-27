@@ -1,87 +1,123 @@
 export const APSACS_MONOGRAM_STORAGE_KEY = 'meritexam_apsacs_monogram_v1';
 
-export const APSACS_MONOGRAM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 185" width="240" height="185">
+export const APSACS_MONOGRAM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 410" width="400" height="410">
   <defs>
-    <path id="apsacs-top-arc" d="M 32 108 A 88 88 0 0 1 208 108" />
-    <path id="apsacs-bottom-arc" d="M 68 153 Q 120 171 172 153" />
+    <path id="apsacs-top-arc" d="M 28 258 A 178 178 0 1 1 372 258" />
+    <path id="apsacs-motto-arc" d="M 62 342 Q 200 434 338 342" />
   </defs>
 
-  <!-- Outer Arched System Name -->
+  <!-- Outer Circular System Title: ARMY PUBLIC SCHOOLS & COLLEGES SYSTEM -->
   <text
     font-family="Arial, Helvetica, sans-serif"
-    font-size="12.2"
+    font-size="24.5"
     font-weight="900"
-    fill="#0f172a"
-    letter-spacing="0.35"
+    fill="#1e1b18"
+    letter-spacing="0.2"
   >
     <textPath href="#apsacs-top-arc" startOffset="50%" text-anchor="middle">
-      ARMY PUBLIC SCHOOLS &amp; COLLEGES
+      ARMY PUBLIC SCHOOLS &amp; COLLEGES SYSTEM
     </textPath>
   </text>
 
-  <!-- Inner System Sub-label -->
+  <!-- Centered Bold APSACS Label -->
   <text
-    x="120"
-    y="50"
+    x="200"
+    y="63"
     text-anchor="middle"
     font-family="Arial, Helvetica, sans-serif"
-    font-size="11"
+    font-size="28"
     font-weight="900"
-    fill="#0f172a"
-    letter-spacing="1.6"
+    fill="#1e1b18"
+    letter-spacing="1"
   >
-    SYSTEM
+    APSACS
   </text>
 
-  <!-- Subtle Inner Laurel / Frame Arcs -->
+  <!-- Iconic Deep Emerald Green (#006737) Fountain-Pen & Open Book Emblem -->
+  <!-- Outer Left Book Page -->
   <path
-    d="M 41 112 C 39 131 51 146 72 153"
-    fill="none"
-    stroke="#0f172a"
-    stroke-width="2.4"
-    stroke-linecap="round"
+    d="M 64 104 Q 95 95 126 112 L 126 226 C 142 252 168 282 186 312 C 150 278 106 258 59 256 Z"
+    fill="#006737"
   />
+  <!-- Inner Left Nib Wing -->
   <path
-    d="M 199 112 C 201 131 189 146 168 153"
-    fill="none"
-    stroke="#0f172a"
-    stroke-width="2.4"
-    stroke-linecap="round"
+    d="M 134 72 C 168 98 194 136 194 176 L 194 304 C 176 268 148 242 136 222 Z"
+    fill="#006737"
   />
-
-  <!-- Central Crest Nib / Flame -->
-  <path d="M 120 57 L 125 66 L 120 73 L 115 66 Z" fill="#0f172a" />
-
-  <!-- Iconic APSACS Fanned Open Book — Left Wing (5 bold wedge pages) -->
-  <path d="M 118 134 L 112 75 L 105 74 L 114 134 Z" fill="#0f172a" />
-  <path d="M 112 134 L 99 75 L 91 77 L 107 135 Z" fill="#0f172a" />
-  <path d="M 105 135 L 84 80 L 76 84 L 99 136 Z" fill="#0f172a" />
-  <path d="M 97 137 L 69 89 L 62 95 L 91 138 Z" fill="#0f172a" />
-  <path d="M 89 139 L 55 102 L 50 109 L 84 142 Z" fill="#0f172a" />
-
-  <!-- Iconic APSACS Fanned Open Book — Right Wing (5 symmetrical bold wedge pages) -->
-  <path d="M 122 134 L 128 75 L 135 74 L 126 134 Z" fill="#0f172a" />
-  <path d="M 128 134 L 141 75 L 149 77 L 133 135 Z" fill="#0f172a" />
-  <path d="M 135 135 L 156 80 L 164 84 L 141 136 Z" fill="#0f172a" />
-  <path d="M 143 137 L 171 89 L 178 95 L 149 138 Z" fill="#0f172a" />
-  <path d="M 151 139 L 185 102 L 190 109 L 156 142 Z" fill="#0f172a" />
-
-  <!-- Book Spine Cradle Base -->
+  <!-- Inner Right Nib Wing -->
   <path
-    d="M 82 144 Q 120 135 158 144 Q 120 151 82 144 Z"
-    fill="#0f172a"
+    d="M 266 72 C 232 98 206 136 206 176 L 206 304 C 224 268 252 242 264 222 Z"
+    fill="#006737"
+  />
+  <!-- Outer Right Book Page -->
+  <path
+    d="M 336 104 Q 305 95 274 112 L 274 226 C 258 252 232 282 214 312 C 250 278 294 258 341 256 Z"
+    fill="#006737"
   />
 
-  <!-- Bottom Motto Curve -->
+  <!-- Central Nib Breath-Hole Oval -->
+  <ellipse
+    cx="200"
+    cy="211"
+    rx="14"
+    ry="10"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="1.2"
+  />
+
+  <!-- Bottom Banner Ribbon: I SHALL RISE AND SHINE -->
+  <!-- Left Swallowtail Wing & Fold -->
+  <path
+    d="M 85 290 L 41 257 L 29 281 L 9 280 L 49 336 L 78 320 Z"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M 56 308 L 85 290 L 76 320 Z"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+
+  <!-- Right Swallowtail Wing & Fold -->
+  <path
+    d="M 315 290 L 359 257 L 371 281 L 391 280 L 351 336 L 322 320 Z"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M 344 308 L 315 290 L 324 320 Z"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+
+  <!-- Front Curved Scroll Banner -->
+  <path
+    d="M 56 308 Q 200 398 344 308 L 358 352 Q 200 452 42 352 Z"
+    fill="#ffffff"
+    stroke="#1e1b18"
+    stroke-width="2.2"
+    stroke-linejoin="round"
+  />
+
+  <!-- Ribbon Motto Text -->
   <text
     font-family="Arial, Helvetica, sans-serif"
-    font-size="9.5"
-    font-weight="800"
-    fill="#0f172a"
-    letter-spacing="1.5"
+    font-size="19.5"
+    font-weight="900"
+    fill="#1e1b18"
+    letter-spacing="0.4"
   >
-    <textPath href="#apsacs-bottom-arc" startOffset="50%" text-anchor="middle">
-      APSACS · IQRA
+    <textPath href="#apsacs-motto-arc" startOffset="50%" text-anchor="middle">
+      I SHALL RISE AND SHINE
     </textPath>
   </text>
 </svg>`;
@@ -138,7 +174,7 @@ export async function getApsacsMonogramPngDataUrl(): Promise<string> {
   const svgBlob = new Blob([APSACS_MONOGRAM_SVG], { type: 'image/svg+xml;charset=utf-8' });
   const blobUrl = URL.createObjectURL(svgBlob);
   try {
-    const result = await renderImageToPngBytes(blobUrl, 480, 370);
+    const result = await renderImageToPngBytes(blobUrl, 480, 492);
     cachedDefaultPngDataUrl = result.dataUrl;
     return result.dataUrl;
   } finally {
@@ -151,11 +187,11 @@ export async function getMonogramForWordExport(
 ): Promise<{ bytes: Uint8Array; width: number; height: number } | null> {
   try {
     if (customDataUrl && customDataUrl.trim()) {
-      const res = await renderImageToPngBytes(customDataUrl.trim(), 360, 280);
+      const res = await renderImageToPngBytes(customDataUrl.trim(), 360, 370);
       return { bytes: res.bytes, width: res.width, height: res.height };
     }
     const pngDataUrl = await getApsacsMonogramPngDataUrl();
-    const res = await renderImageToPngBytes(pngDataUrl, 480, 370);
+    const res = await renderImageToPngBytes(pngDataUrl, 480, 492);
     return { bytes: res.bytes, width: res.width, height: res.height };
   } catch {
     return null;
@@ -165,7 +201,7 @@ export async function getMonogramForWordExport(
 export async function normalizeUploadedMonogramFile(file: File): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {
-    const res = await renderImageToPngBytes(objectUrl, 360, 280);
+    const res = await renderImageToPngBytes(objectUrl, 360, 370);
     return res.dataUrl;
   } finally {
     URL.revokeObjectURL(objectUrl);

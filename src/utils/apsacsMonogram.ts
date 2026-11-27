@@ -1,128 +1,20 @@
 export const APSACS_MONOGRAM_STORAGE_KEY = 'meritexam_apsacs_monogram_v1';
 
-export const APSACS_MONOGRAM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 410" width="400" height="410">
-  <defs>
-    <path id="apsacs-top-arc" d="M 28 258 A 178 178 0 1 1 372 258" />
-    <path id="apsacs-motto-arc" d="M 62 342 Q 200 434 338 342" />
-  </defs>
+export const APSACS_MONOGRAM_PNG_DATA_URL =
+  'data:image/png;base64,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';
 
-  <!-- Outer Circular System Title: ARMY PUBLIC SCHOOLS & COLLEGES SYSTEM -->
-  <text
-    font-family="Arial, Helvetica, sans-serif"
-    font-size="24.5"
-    font-weight="900"
-    fill="#1e1b18"
-    letter-spacing="0.2"
-  >
-    <textPath href="#apsacs-top-arc" startOffset="50%" text-anchor="middle">
-      ARMY PUBLIC SCHOOLS &amp; COLLEGES SYSTEM
-    </textPath>
-  </text>
+export const APSACS_MONOGRAM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 225" width="220" height="225"><image href="${APSACS_MONOGRAM_PNG_DATA_URL}" width="220" height="225" /></svg>`;
 
-  <!-- Centered Bold APSACS Label -->
-  <text
-    x="200"
-    y="63"
-    text-anchor="middle"
-    font-family="Arial, Helvetica, sans-serif"
-    font-size="28"
-    font-weight="900"
-    fill="#1e1b18"
-    letter-spacing="1"
-  >
-    APSACS
-  </text>
-
-  <!-- Iconic Deep Emerald Green (#006737) Fountain-Pen & Open Book Emblem -->
-  <!-- Outer Left Book Page -->
-  <path
-    d="M 64 104 Q 95 95 126 112 L 126 226 C 142 252 168 282 186 312 C 150 278 106 258 59 256 Z"
-    fill="#006737"
-  />
-  <!-- Inner Left Nib Wing -->
-  <path
-    d="M 134 72 C 168 98 194 136 194 176 L 194 304 C 176 268 148 242 136 222 Z"
-    fill="#006737"
-  />
-  <!-- Inner Right Nib Wing -->
-  <path
-    d="M 266 72 C 232 98 206 136 206 176 L 206 304 C 224 268 252 242 264 222 Z"
-    fill="#006737"
-  />
-  <!-- Outer Right Book Page -->
-  <path
-    d="M 336 104 Q 305 95 274 112 L 274 226 C 258 252 232 282 214 312 C 250 278 294 258 341 256 Z"
-    fill="#006737"
-  />
-
-  <!-- Central Nib Breath-Hole Oval -->
-  <ellipse
-    cx="200"
-    cy="211"
-    rx="14"
-    ry="10"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="1.2"
-  />
-
-  <!-- Bottom Banner Ribbon: I SHALL RISE AND SHINE -->
-  <!-- Left Swallowtail Wing & Fold -->
-  <path
-    d="M 85 290 L 41 257 L 29 281 L 9 280 L 49 336 L 78 320 Z"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="2"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M 56 308 L 85 290 L 76 320 Z"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="2"
-    stroke-linejoin="round"
-  />
-
-  <!-- Right Swallowtail Wing & Fold -->
-  <path
-    d="M 315 290 L 359 257 L 371 281 L 391 280 L 351 336 L 322 320 Z"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="2"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M 344 308 L 315 290 L 324 320 Z"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="2"
-    stroke-linejoin="round"
-  />
-
-  <!-- Front Curved Scroll Banner -->
-  <path
-    d="M 56 308 Q 200 398 344 308 L 358 352 Q 200 452 42 352 Z"
-    fill="#ffffff"
-    stroke="#1e1b18"
-    stroke-width="2.2"
-    stroke-linejoin="round"
-  />
-
-  <!-- Ribbon Motto Text -->
-  <text
-    font-family="Arial, Helvetica, sans-serif"
-    font-size="19.5"
-    font-weight="900"
-    fill="#1e1b18"
-    letter-spacing="0.4"
-  >
-    <textPath href="#apsacs-motto-arc" startOffset="50%" text-anchor="middle">
-      I SHALL RISE AND SHINE
-    </textPath>
-  </text>
-</svg>`;
-
-let cachedDefaultPngDataUrl: string | null = null;
+function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+  const commaIdx = dataUrl.indexOf(",");
+  const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
 
 function renderImageToPngBytes(
   src: string,
@@ -138,21 +30,21 @@ function renderImageToPngBytes(
       const drawW = Math.max(1, Math.round(naturalW * scale));
       const drawH = Math.max(1, Math.round(naturalH * scale));
 
-      const canvas = document.createElement('canvas');
+      const canvas = document.createElement("canvas");
       canvas.width = drawW;
       canvas.height = drawH;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext("2d");
       if (!ctx) {
-        reject(new Error('Canvas context unavailable for monogram rendering.'));
+        reject(new Error("Canvas context unavailable for monogram rendering."));
         return;
       }
       ctx.clearRect(0, 0, drawW, drawH);
       ctx.drawImage(img, 0, 0, drawW, drawH);
 
-      const dataUrl = canvas.toDataURL('image/png');
+      const dataUrl = canvas.toDataURL("image/png");
       canvas.toBlob(async (blob) => {
         if (!blob) {
-          reject(new Error('Failed to encode monogram PNG.'));
+          reject(new Error("Failed to encode monogram PNG."));
           return;
         }
         const buffer = await blob.arrayBuffer();
@@ -162,24 +54,15 @@ function renderImageToPngBytes(
           width: drawW,
           height: drawH,
         });
-      }, 'image/png');
+      }, "image/png");
     };
-    img.onerror = () => reject(new Error('Failed to load monogram image.'));
+    img.onerror = () => reject(new Error("Failed to load monogram image."));
     img.src = src;
   });
 }
 
 export async function getApsacsMonogramPngDataUrl(): Promise<string> {
-  if (cachedDefaultPngDataUrl) return cachedDefaultPngDataUrl;
-  const svgBlob = new Blob([APSACS_MONOGRAM_SVG], { type: 'image/svg+xml;charset=utf-8' });
-  const blobUrl = URL.createObjectURL(svgBlob);
-  try {
-    const result = await renderImageToPngBytes(blobUrl, 480, 492);
-    cachedDefaultPngDataUrl = result.dataUrl;
-    return result.dataUrl;
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
+  return APSACS_MONOGRAM_PNG_DATA_URL;
 }
 
 export async function getMonogramForWordExport(
@@ -190,9 +73,11 @@ export async function getMonogramForWordExport(
       const res = await renderImageToPngBytes(customDataUrl.trim(), 360, 370);
       return { bytes: res.bytes, width: res.width, height: res.height };
     }
-    const pngDataUrl = await getApsacsMonogramPngDataUrl();
-    const res = await renderImageToPngBytes(pngDataUrl, 480, 492);
-    return { bytes: res.bytes, width: res.width, height: res.height };
+    return {
+      bytes: dataUrlToUint8Array(APSACS_MONOGRAM_PNG_DATA_URL),
+      width: 220,
+      height: 225,
+    };
   } catch {
     return null;
   }

@@ -1,18 +1,20 @@
 import { GRADE_LABELS, GradeLevel } from '../types';
 
-export type EditionClass = GradeLevel | 'All';
+export type EditionClass = GradeLevel | 'SSC' | 'HSSC' | 'All';
 
 /**
  * Set to 'All' in the full 4-class platform.
- * When exporting a class-specific deployment ZIP (9th, 10th, 1st A, or 2nd Year),
- * the exporter sets this constant to that single class so the deployed domain
- * locks exclusively to that class out of the box.
+ * Change this single value to:
+ *   'SSC'      -> locks the app exclusively to 9th & 10th (SSC-I & SSC-II)
+ *   'HSSC'     -> locks the app exclusively to 1st Year & 2nd Year (HSSC-I & HSSC-II)
+ *   '9th' | '10th' | '1st A' | '2nd Year' -> locks to a single class
+ * You can also set VITE_APP_CLASS in Netlify / Vercel environment variables without editing code.
  */
 export const BUILD_LOCKED_CLASS: EditionClass = 'All';
 
 export interface ClassEditionMeta {
   grade: EditionClass;
-  queryKey: '9th' | '10th' | '1st-a' | '2nd-year' | 'all';
+  queryKey: 'ssc' | 'hssc' | '9th' | '10th' | '1st-a' | '2nd-year' | 'all';
   slug: string;
   badge: string;
   title: string;
@@ -25,6 +27,32 @@ export interface ClassEditionMeta {
 }
 
 export const CLASS_EDITIONS: ClassEditionMeta[] = [
+  {
+    grade: 'SSC',
+    queryKey: 'ssc',
+    slug: '/ssc',
+    badge: 'SSC · 9th & 10th',
+    title: 'SSC Portal (9th & 10th Classes)',
+    urduTitle: 'ایس ایس سی پورٹل (9th اور 10th کلاس)',
+    description: 'Dedicated combined portal & standalone package strictly for Matric / SSC students and teachers (9th & 10th Classes).',
+    urduDescription: 'صرف نہم (9th) اور دہم (10th) میٹرک کلاسز کے لیے مکمل علیحدہ پورٹل۔',
+    zipFilename: 'meritexam-ssc.zip',
+    accentGradient: 'from-blue-600 to-teal-600',
+    borderClass: 'border-blue-300',
+  },
+  {
+    grade: 'HSSC',
+    queryKey: 'hssc',
+    slug: '/hssc',
+    badge: 'HSSC · 1st & 2nd Year',
+    title: 'HSSC Portal (1st Year & 2nd Year)',
+    urduTitle: 'ایچ ایس ایس سی پورٹل (1st Year اور 2nd Year)',
+    description: 'Dedicated combined portal & standalone package strictly for Intermediate / HSSC students and teachers (1st Year & 2nd Year).',
+    urduDescription: 'صرف فرسٹ ایئر (1st Year) اور سیکنڈ ایئر (2nd Year) انٹرمیڈیٹ کلاسز کے لیے مکمل علیحدہ پورٹل۔',
+    zipFilename: 'meritexam-hssc.zip',
+    accentGradient: 'from-indigo-600 to-amber-600',
+    borderClass: 'border-indigo-300',
+  },
   {
     grade: '9th',
     queryKey: '9th',
@@ -97,6 +125,20 @@ export function normalizeEditionClass(raw: unknown): EditionClass {
   const cleaned = raw.trim().toLowerCase().replace(/[_/]+/g, ' ').replace(/\s+/g, ' ');
   if (!cleaned || cleaned === 'all') return 'All';
 
+  if (cleaned === 'ssc' || cleaned === 'matric' || cleaned === '9th-10th' || cleaned === '9th 10th') {
+    return 'SSC';
+  }
+  if (
+    cleaned === 'hssc' ||
+    cleaned === 'inter' ||
+    cleaned === 'intermediate' ||
+    cleaned === 'fsc' ||
+    cleaned === '11th-12th' ||
+    cleaned === '11th 12th'
+  ) {
+    return 'HSSC';
+  }
+
   if (cleaned === '9' || cleaned === '9th' || cleaned === 'ssc-1' || cleaned === 'ssc-i' || cleaned === 'ninth') {
     return '9th';
   }
@@ -128,6 +170,23 @@ export function normalizeEditionClass(raw: unknown): EditionClass {
     return '2nd Year';
   }
   return 'All';
+}
+
+export function getEditionAllowedGrades(edition: EditionClass): GradeLevel[] {
+  if (edition === 'SSC') return ['9th', '10th'];
+  if (edition === 'HSSC') return ['1st A', '2nd Year'];
+  if (edition === 'All') return ['9th', '10th', '1st A', '2nd Year'];
+  return [edition];
+}
+
+export function isEditionRestricted(edition: EditionClass): boolean {
+  return edition !== 'All';
+}
+
+export function isGradeAllowedInEdition(grade: string | undefined, edition: EditionClass): boolean {
+  if (edition === 'All') return true;
+  if (!grade) return false;
+  return getEditionAllowedGrades(edition).includes(grade.trim() as GradeLevel);
 }
 
 export function getBuildLockedEdition(): EditionClass {
@@ -182,5 +241,14 @@ export function getClassPathSlug(edition: EditionClass): string {
 
 export function getEditionLabel(edition: EditionClass): string {
   if (edition === 'All') return 'All Classes (9th, 10th, 1st A & 2nd Year)';
+  if (edition === 'SSC') return 'SSC (9th & 10th Classes)';
+  if (edition === 'HSSC') return 'HSSC (1st Year & 2nd Year)';
   return GRADE_LABELS[edition];
+}
+
+export function getEditionShortBadge(edition: EditionClass): string {
+  if (edition === 'All') return 'All Classes';
+  if (edition === 'SSC') return 'SSC (9th & 10th)';
+  if (edition === 'HSSC') return 'HSSC (1st & 2nd Year)';
+  return edition;
 }

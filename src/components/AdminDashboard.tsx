@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   Check,
@@ -8,6 +8,7 @@ import {
   Eye,
   FilePlus2,
   FileText,
+  GraduationCap,
   Layers,
   Lock,
   LogOut,
@@ -41,6 +42,7 @@ import {
   releaseAttemptResult,
   revokeAdminAccess,
   saveSystemSettings,
+  setTestClosingTime,
   toggleStudentAnswerKeyReview,
   toggleTeacherPaperCreation,
   toggleTestActiveStatus,
@@ -51,11 +53,12 @@ import {
 } from '../services/mcqService';
 import {
   AccountStatus,
-  GRADES,
   GRADE_LABELS,
   GradeLevel,
   MCQTest,
   ResultMode,
+  TeacherActivity,
+  TeacherActivityAction,
   TestAccessMode,
   TestAttempt,
   TestDeliveryOverride,
@@ -72,7 +75,13 @@ import { StudentRecordModal } from './StudentRecordModal';
 import { PlatformBrochureModal } from './PlatformBrochureModal';
 import { ClassDeploymentsModal } from './ClassDeploymentsModal';
 import { DeveloperFooter } from './DeveloperFooter';
-import { getActiveEditionClass, getClassPathSlug } from '../config/appEdition';
+import {
+  getActiveEditionClass,
+  getClassPathSlug,
+  getEditionAllowedGrades,
+  getEditionShortBadge,
+  isEditionRestricted,
+} from '../config/appEdition';
 import {
   buildStudentPerformanceReport,
   getEffectiveTestEndMs,
@@ -102,21 +111,29 @@ function parseTimestampMs(value: unknown): number | null {
 export function AdminDashboard() {
   const { firebaseUser, userProfile, isMainAdmin, systemSettings, logout } = useAuth();
   const activeEdition = getActiveEditionClass();
-  const isSingleClassEdition = activeEdition !== 'All';
-  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'tests' | 'results'>('users');
+  const isRestrictedEdition = isEditionRestricted(activeEdition);
+  const editionGrades = getEditionAllowedGrades(activeEdition);
+  const isSingleClassEdition = editionGrades.length === 1;
+  const singleLockedGrade = isSingleClassEdition ? editionGrades[0] : undefined;
+  const editionBadge = getEditionShortBadge(activeEdition);
+  const showMainAdminPlatformTools = !isRestrictedEdition && isMainAdmin;
+  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'tests' | 'results' | 'teachers'>('users');
 
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [tests, setTests] = useState<MCQTest[]>([]);
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
+  const [teacherActivities, setTeacherActivities] = useState<TeacherActivity[]>([]);
+  const [teacherFilterId, setTeacherFilterId] = useState<string>('all');
+  const [teacherActionFilter, setTeacherActionFilter] = useState<TeacherActivityAction | 'all'>('all');
 
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all');
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
   const [userClassFilter, setUserClassFilter] = useState<GradeLevel | 'All'>(
-    isSingleClassEdition ? activeEdition : 'All',
+    singleLockedGrade ?? 'All',
   );
 
   const [resultsClassFilter, setResultsClassFilter] = useState<GradeLevel | 'All'>(
-    isSingleClassEdition ? activeEdition : 'All',
+    singleLockedGrade ?? 'All',
   );
   const [resultsTestFilter, setResultsTestFilter] = useState<string>('all');
   const [resultsAttendanceFilter, setResultsAttendanceFilter] = useState<
@@ -172,7 +189,18 @@ export function AdminDashboard() {
     const unsubUsers = onSnapshot(
       query(collection(db, 'users'), orderBy('createdAt', 'desc')),
       (snap) => {
-        setUsers(snap.docs.map((d) => d.data() as UserAccount));
+        const list = snap.docs.map((d) => d.data() as UserAccount);
+        setUsers(
+          !isRestrictedEdition
+            ? list
+            : list.filter((u) => {
+                if (u.role === 'admin') return true;
+                if (u.role === 'teacher') {
+                  return u.grade === 'All' || editionGrades.includes(u.grade as GradeLevel);
+                }
+                return !isSingleStudentGrade(u.grade) || editionGrades.includes(u.grade as GradeLevel);
+              }),
+        );
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'users');
@@ -182,7 +210,16 @@ export function AdminDashboard() {
     const unsubTests = onSnapshot(
       query(collection(db, 'tests'), orderBy('createdAt', 'desc')),
       (snap) => {
-        setTests(snap.docs.map((d) => d.data() as MCQTest));
+        const list = snap.docs.map((d) => d.data() as MCQTest);
+        setTests(
+          !isRestrictedEdition
+            ? list
+            : list.filter((t) => {
+                const allowed =
+                  t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
+                return allowed.some((g) => editionGrades.includes(g));
+              }),
+        );
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'tests');
@@ -192,10 +229,30 @@ export function AdminDashboard() {
     const unsubAttempts = onSnapshot(
       query(collection(db, 'attempts'), orderBy('submittedAt', 'desc')),
       (snap) => {
-        setAttempts(snap.docs.map((d) => d.data() as TestAttempt));
+        const list = snap.docs.map((d) => d.data() as TestAttempt);
+        setAttempts(
+          !isRestrictedEdition
+            ? list
+            : list.filter((a) => editionGrades.includes(a.grade as GradeLevel)),
+        );
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'attempts');
+      },
+    );
+
+    const unsubTeacherActivities = onSnapshot(
+      query(collection(db, 'teacherActivities'), orderBy('createdAt', 'desc')),
+      (snap) => {
+        const list = snap.docs.map((d) => d.data() as TeacherActivity);
+        setTeacherActivities(
+          !isRestrictedEdition
+            ? list
+            : list.filter((a) => editionGrades.includes(a.grade as GradeLevel)),
+        );
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'teacherActivities');
       },
     );
 
@@ -203,6 +260,7 @@ export function AdminDashboard() {
       unsubUsers();
       unsubTests();
       unsubAttempts();
+      unsubTeacherActivities();
     };
   }, [firebaseUser]);
 
@@ -212,6 +270,30 @@ export function AdminDashboard() {
     }, 15_000);
     return () => window.clearInterval(id);
   }, []);
+
+  const syncedExpiredClosingIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!firebaseUser || tests.length === 0) return;
+    const now = Date.now();
+    const toBackfill = tests.filter((t) => {
+      if (!t.isActive || t.createdByRole === 'student_practice') return false;
+      if (t.scheduledEndAt && t.scheduledEndAt.trim().length > 0) return false;
+      if (syncedExpiredClosingIdsRef.current.has(t.id)) return false;
+      const effectiveEndMs = getEffectiveTestEndMs(t);
+      return effectiveEndMs !== null && effectiveEndMs <= now;
+    });
+    if (toBackfill.length === 0) return;
+
+    toBackfill.forEach((t) => {
+      syncedExpiredClosingIdsRef.current.add(t.id);
+      const effectiveEndMs = getEffectiveTestEndMs(t);
+      if (effectiveEndMs === null) return;
+      void setTestClosingTime(t.id, new Date(effectiveEndMs).toISOString()).catch(() => {
+        // Ignore non-fatal sync failure on legacy test documents
+      });
+    });
+  }, [firebaseUser, tests]);
 
   const pendingUsersCount = useMemo(
     () => users.filter((u) => u.status === 'pending').length,
@@ -487,6 +569,162 @@ export function AdminDashboard() {
     });
   }, [selectedStudentId, users, attempts, conductedTests, nowMs]);
 
+  const teacherAnalytics = useMemo(() => {
+    interface TeacherSummaryRow {
+      uid: string;
+      name: string;
+      email: string;
+      status: AccountStatus | 'external';
+      grade: GradeLevel | 'All';
+      subject: string;
+      identifier: string;
+      generatedCount: number;
+      pdfDownloadCount: number;
+      wordDownloadCount: number;
+      publishedEventCount: number;
+      draftSavedCount: number;
+      liveBankTotal: number;
+      liveActiveCount: number;
+      totalActions: number;
+      lastActivityMs: number;
+    }
+
+    const map = new Map<string, TeacherSummaryRow>();
+
+    users
+      .filter((u) => u.role === 'teacher')
+      .forEach((u) => {
+        map.set(u.uid, {
+          uid: u.uid,
+          name: u.fullName,
+          email: u.email,
+          status: u.status,
+          grade: u.grade,
+          subject: u.subject,
+          identifier: u.identifier,
+          generatedCount: 0,
+          pdfDownloadCount: 0,
+          wordDownloadCount: 0,
+          publishedEventCount: 0,
+          draftSavedCount: 0,
+          liveBankTotal: 0,
+          liveActiveCount: 0,
+          totalActions: 0,
+          lastActivityMs: 0,
+        });
+      });
+
+    conductedTests
+      .filter((t) => t.createdByRole === 'teacher')
+      .forEach((t) => {
+        const existingRow = map.get(t.createdBy);
+        const testMs = parseTimestampMs(t.createdAt) ?? 0;
+        if (existingRow) {
+          existingRow.liveBankTotal += 1;
+          if (t.isActive) existingRow.liveActiveCount += 1;
+          if (testMs > existingRow.lastActivityMs) {
+            existingRow.lastActivityMs = testMs;
+          }
+        } else {
+          map.set(t.createdBy, {
+            uid: t.createdBy,
+            name: t.createdByName || 'Teacher',
+            email: '',
+            status: 'external',
+            grade: t.grade,
+            subject: t.subject,
+            identifier: '',
+            generatedCount: 0,
+            pdfDownloadCount: 0,
+            wordDownloadCount: 0,
+            publishedEventCount: 0,
+            draftSavedCount: 0,
+            liveBankTotal: 1,
+            liveActiveCount: t.isActive ? 1 : 0,
+            totalActions: 0,
+            lastActivityMs: testMs,
+          });
+        }
+      });
+
+    teacherActivities.forEach((act) => {
+      let row = map.get(act.teacherId);
+      if (!row) {
+        row = {
+          uid: act.teacherId,
+          name: act.teacherName || 'Teacher',
+          email: act.teacherEmail || '',
+          status: 'external',
+          grade: act.grade,
+          subject: act.subject,
+          identifier: '',
+          generatedCount: 0,
+          pdfDownloadCount: 0,
+          wordDownloadCount: 0,
+          publishedEventCount: 0,
+          draftSavedCount: 0,
+          liveBankTotal: 0,
+          liveActiveCount: 0,
+          totalActions: 0,
+          lastActivityMs: 0,
+        };
+        map.set(act.teacherId, row);
+      }
+      if (!row.email && act.teacherEmail) {
+        row.email = act.teacherEmail;
+      }
+      row.totalActions += 1;
+      if (act.action === 'paper_generated') row.generatedCount += 1;
+      else if (act.action === 'pdf_downloaded') row.pdfDownloadCount += 1;
+      else if (act.action === 'word_downloaded') row.wordDownloadCount += 1;
+      else if (act.action === 'paper_published') row.publishedEventCount += 1;
+      else if (act.action === 'paper_saved_draft') row.draftSavedCount += 1;
+
+      const actMs = parseTimestampMs(act.createdAt) ?? 0;
+      if (actMs > row.lastActivityMs) {
+        row.lastActivityMs = actMs;
+      }
+    });
+
+    const summaries = Array.from(map.values()).sort((a, b) => {
+      if (b.totalActions !== a.totalActions) return b.totalActions - a.totalActions;
+      if (b.liveBankTotal !== a.liveBankTotal) return b.liveBankTotal - a.liveBankTotal;
+      return a.name.localeCompare(b.name);
+    });
+
+    const totals = summaries.reduce(
+      (acc, s) => {
+        if (s.status === 'approved') acc.approvedTeachers += 1;
+        acc.generated += s.generatedCount;
+        acc.pdfDownloads += s.pdfDownloadCount;
+        acc.wordDownloads += s.wordDownloadCount;
+        acc.publishedEvents += s.publishedEventCount;
+        acc.liveBankTotal += s.liveBankTotal;
+        acc.liveActiveCount += s.liveActiveCount;
+        return acc;
+      },
+      {
+        approvedTeachers: 0,
+        generated: 0,
+        pdfDownloads: 0,
+        wordDownloads: 0,
+        publishedEvents: 0,
+        liveBankTotal: 0,
+        liveActiveCount: 0,
+      },
+    );
+
+    const filteredLogs = teacherActivities.filter((act) => {
+      const matchesTeacher =
+        teacherFilterId === 'all' || act.teacherId === teacherFilterId;
+      const matchesAction =
+        teacherActionFilter === 'all' || act.action === teacherActionFilter;
+      return matchesTeacher && matchesAction;
+    });
+
+    return { summaries, totals, filteredLogs };
+  }, [users, conductedTests, teacherActivities, teacherFilterId, teacherActionFilter]);
+
   async function handleSaveSettings(e: React.FormEvent) {
     e.preventDefault();
     if (!firebaseUser) return;
@@ -563,6 +801,12 @@ export function AdminDashboard() {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || 'Failed to download project ZIP.');
       }
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('zip') && !contentType.includes('octet-stream')) {
+        throw new Error(
+          'ZIP export is only served from the AI Studio app server. Please open your AI Studio preview URL as Admin to download the latest ZIP.',
+        );
+      }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
@@ -615,9 +859,9 @@ export function AdminDashboard() {
           <div className="font-display text-base sm:text-lg font-bold text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-amber-500 to-orange-600 shrink-0" />
             <span>MeritExam Admin</span>
-            {isSingleClassEdition && (
+            {isRestrictedEdition && (
               <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
-                {activeEdition}
+                {editionBadge}
               </span>
             )}
             {isMainAdmin && (
@@ -627,7 +871,7 @@ export function AdminDashboard() {
             )}
           </div>
 
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+          <nav className="hidden md:flex items-center gap-5 text-sm font-medium">
             <button
               type="button"
               onClick={() => setActiveTab('users')}
@@ -648,7 +892,7 @@ export function AdminDashboard() {
                   : 'border-transparent text-slate-600 hover:text-slate-900'
               }`}
             >
-              Examination Mode
+              Exam Mode
             </button>
             <button
               type="button"
@@ -670,7 +914,18 @@ export function AdminDashboard() {
                   : 'border-transparent text-slate-600 hover:text-slate-900'
               }`}
             >
-              Results &amp; Attendance ({absentRecords.length > 0 ? `${absentRecords.length} Absent` : `${unreleasedAttemptsCount} Held`})
+              Results ({absentRecords.length > 0 ? `${absentRecords.length} Absent` : `${unreleasedAttemptsCount} Held`})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('teachers')}
+              className={`py-5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'teachers'
+                  ? 'border-blue-700 text-slate-900 font-semibold'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Teacher Records ({teacherActivities.length})
             </button>
           </nav>
 
@@ -731,6 +986,17 @@ export function AdminDashboard() {
             }`}
           >
             Results ({absentRecords.length > 0 ? `${absentRecords.length} Absent` : `${unreleasedAttemptsCount} Held`})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('teachers')}
+            className={`col-span-2 px-3 py-2.5 text-xs font-semibold rounded-lg border text-center whitespace-nowrap truncate cursor-pointer transition-colors ${
+              activeTab === 'teachers'
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            Teacher Records ({teacherActivities.length} Activities)
           </button>
         </nav>
 
@@ -810,37 +1076,41 @@ export function AdminDashboard() {
               <Settings className="w-4 h-4" />
               Exam Mode
             </button>
-            <button
-              type="button"
-              onClick={() => setShowBrochureModal(true)}
-              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
-              title="View and copy complete English & Urdu website description and capacity details"
-            >
-              <FileText className="w-4 h-4" />
-              App Description &amp; Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowClassDeploymentsModal(true)}
-              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-purple-800 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
-              title="Get 4 separate class links & ZIPs (9th, 10th, 1st Year, 2nd Year) + 1 Complete All-Classes ZIP"
-            >
-              <Layers className="w-4 h-4" />
-              5 Links &amp; ZIPs
-            </button>
-            <button
-              type="button"
-              disabled={downloadingZip}
-              onClick={() => void handleDownloadProjectZip()}
-              className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 disabled:opacity-60 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              {downloadingZip ? 'Preparing ZIP...' : 'Download ZIP'}
-            </button>
+            {showMainAdminPlatformTools && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowBrochureModal(true)}
+                  className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                  title="View and copy complete English & Urdu website description and capacity details"
+                >
+                  <FileText className="w-4 h-4" />
+                  App Description &amp; Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowClassDeploymentsModal(true)}
+                  className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-purple-800 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                  title="Get SSC (9th & 10th), HSSC (1st & 2nd Year), 4 single-class, and Complete All-Classes links & ZIPs"
+                >
+                  <Layers className="w-4 h-4" />
+                  Portal Links &amp; ZIPs
+                </button>
+                <button
+                  type="button"
+                  disabled={downloadingZip}
+                  onClick={() => void handleDownloadProjectZip()}
+                  className="px-3.5 py-2 text-xs sm:text-sm font-semibold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 disabled:opacity-60 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  {downloadingZip ? 'Preparing ZIP...' : 'Download ZIP'}
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {zipError && (
+        {showMainAdminPlatformTools && zipError && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
             {zipError}
           </div>
@@ -931,8 +1201,10 @@ export function AdminDashboard() {
                   aria-label="Filter accounts by class"
                   className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg"
                 >
-                  <option value="All">All Classes</option>
-                  {GRADES.map((g) => (
+                  <option value="All">
+                    {isRestrictedEdition ? `All (${editionBadge})` : 'All Classes'}
+                  </option>
+                  {editionGrades.map((g) => (
                     <option key={g} value={g}>
                       {GRADE_LABELS[g]}
                     </option>
@@ -1053,7 +1325,7 @@ export function AdminDashboard() {
                                     All Classes — Select Class
                                   </option>
                                 )}
-                                {GRADES.map((g) => (
+                                {editionGrades.map((g) => (
                                   <option key={g} value={g}>
                                     {g}
                                   </option>
@@ -1457,7 +1729,7 @@ export function AdminDashboard() {
               creatorUid={firebaseUser.uid}
               creatorName={userProfile?.fullName || 'Administrator'}
               creatorRole="admin"
-              lockedGrade={isSingleClassEdition ? activeEdition : undefined}
+              lockedGrade={singleLockedGrade}
               systemSettings={systemSettings}
             />
 
@@ -1712,8 +1984,10 @@ export function AdminDashboard() {
                     aria-label="Filter results by class"
                     className="px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg"
                   >
-                    <option value="All">All Classes ({approvedStudents.length} Students)</option>
-                    {GRADES.map((g) => {
+                    <option value="All">
+                      {isRestrictedEdition ? `All ${editionBadge}` : 'All Classes'} ({approvedStudents.length} Students)
+                    </option>
+                    {editionGrades.map((g) => {
                       const count = approvedStudents.filter(
                         (s) => String(s.grade).trim() === g,
                       ).length;
@@ -1975,6 +2249,310 @@ export function AdminDashboard() {
             </div>
           </div>
         )}
+
+        {/* TAB 5: Teacher Paper Creation, PDF/Word Downloads & Publishing Records */}
+        {activeTab === 'teachers' && (
+          <div className="space-y-5">
+            {/* KPI Summary Strip */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-slate-500">Teachers Tracked</p>
+                <p className="font-display text-2xl font-bold text-slate-900 tabular-nums mt-1">
+                  {teacherAnalytics.summaries.length}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                  {teacherAnalytics.totals.approvedTeachers} Approved Faculty
+                </p>
+              </div>
+              <div className="bg-white border border-indigo-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-indigo-700">Papers Generated</p>
+                <p className="font-display text-2xl font-bold text-indigo-800 tabular-nums mt-1">
+                  {teacherAnalytics.totals.generated}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">AI Paper Generations</p>
+              </div>
+              <div className="bg-white border border-rose-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-rose-700">PDF Downloads</p>
+                <p className="font-display text-2xl font-bold text-rose-700 tabular-nums mt-1">
+                  {teacherAnalytics.totals.pdfDownloads}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Official PDF Exports</p>
+              </div>
+              <div className="bg-white border border-blue-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-blue-700">Word (.docx) Downloads</p>
+                <p className="font-display text-2xl font-bold text-blue-800 tabular-nums mt-1">
+                  {teacherAnalytics.totals.wordDownloads}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Editable Word Exports</p>
+              </div>
+              <div className="col-span-2 md:col-span-1 bg-white border border-emerald-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-medium text-emerald-700">Papers Published</p>
+                <p className="font-display text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+                  {teacherAnalytics.totals.publishedEvents}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                  {teacherAnalytics.totals.liveActiveCount} Live · {teacherAnalytics.totals.liveBankTotal} Total in Bank
+                </p>
+              </div>
+            </div>
+
+            {/* Per-Teacher Summary Table */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-lg font-semibold text-slate-900 inline-flex items-center gap-2">
+                    <GraduationCap className="w-5 h-5 text-blue-700" />
+                    Teacher-Wise Paper, PDF, Word &amp; Publish Record
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Every teacher&apos;s generated papers, PDF downloads, Word downloads, and student-published assessments.
+                  </p>
+                </div>
+              </div>
+
+              {teacherAnalytics.summaries.length === 0 ? (
+                <div className="p-10 text-center text-sm text-slate-500">
+                  No teachers registered in this portal yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                        <th className="py-3 px-4">Teacher</th>
+                        <th className="py-3 px-4">Class · Subject</th>
+                        <th className="py-3 px-4 text-center">Generated</th>
+                        <th className="py-3 px-4 text-center">PDF Downloads</th>
+                        <th className="py-3 px-4 text-center">Word Downloads</th>
+                        <th className="py-3 px-4 text-center">Published (Events / Bank)</th>
+                        <th className="py-3 px-4">Last Activity</th>
+                        <th className="py-3 px-4 text-right">Logs</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 text-sm">
+                      {teacherAnalytics.summaries.map((t) => {
+                        const isSelected = teacherFilterId === t.uid;
+                        return (
+                          <tr
+                            key={t.uid}
+                            className={isSelected ? 'bg-blue-50/60' : 'hover:bg-slate-50'}
+                          >
+                            <td className="py-3 px-4">
+                              <div className="font-semibold text-slate-900">{t.name}</div>
+                              <div className="text-xs text-slate-500">
+                                {t.email || t.uid.slice(0, 10)}
+                                {t.identifier ? ` · ${t.identifier}` : ''}
+                              </div>
+                              {t.status !== 'approved' && t.status !== 'external' && (
+                                <span className="inline-block mt-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded bg-amber-100 text-amber-800">
+                                  {t.status}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-slate-600 text-xs">
+                              <div className="font-medium text-slate-800">
+                                {t.grade === 'All' ? 'All Classes' : t.grade}
+                              </div>
+                              <div>{t.subject}</div>
+                            </td>
+                            <td className="py-3 px-4 text-center tabular-nums">
+                              <span className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 text-xs font-bold rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                {t.generatedCount}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center tabular-nums">
+                              <span className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 text-xs font-bold rounded bg-rose-50 text-rose-800 border border-rose-200">
+                                {t.pdfDownloadCount}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center tabular-nums">
+                              <span className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 text-xs font-bold rounded bg-blue-50 text-blue-800 border border-blue-200">
+                                {t.wordDownloadCount}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center tabular-nums">
+                              <div className="inline-flex items-center justify-center gap-1 px-2 py-0.5 text-xs font-bold rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                {t.publishedEventCount} Published
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                {t.liveActiveCount} Live / {t.liveBankTotal} In Bank
+                                {t.draftSavedCount > 0 ? ` · ${t.draftSavedCount} Draft` : ''}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                              {t.lastActivityMs > 0
+                                ? new Date(t.lastActivityMs).toLocaleString()
+                                : 'No activity yet'}
+                            </td>
+                            <td className="py-3 px-4 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTeacherFilterId(isSelected ? 'all' : t.uid)
+                                }
+                                className={`px-2.5 py-1 text-xs font-semibold rounded-md border cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-slate-900 text-white border-slate-900'
+                                    : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'
+                                }`}
+                              >
+                                {isSelected ? 'Show All' : 'View Logs'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Detailed Activity Log */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-display text-base font-semibold text-slate-900">
+                      Detailed Paper &amp; Download Activity Log ({teacherAnalytics.filteredLogs.length})
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Chronological record of every paper generated, PDF exported, Word document downloaded, or test published by teachers.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <select
+                    value={teacherFilterId}
+                    onChange={(e) => setTeacherFilterId(e.target.value)}
+                    aria-label="Filter logs by teacher"
+                    className="px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg"
+                  >
+                    <option value="all">
+                      All Teachers ({teacherAnalytics.summaries.length})
+                    </option>
+                    {teacherAnalytics.summaries.map((t) => (
+                      <option key={t.uid} value={t.uid}>
+                        {t.name} ({t.totalActions} events)
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+                    {(
+                      [
+                        { id: 'all', label: 'All Actions' },
+                        { id: 'pdf_downloaded', label: 'PDF Downloads' },
+                        { id: 'word_downloaded', label: 'Word Downloads' },
+                        { id: 'paper_published', label: 'Published' },
+                        { id: 'paper_saved_draft', label: 'Saved Paused' },
+                        { id: 'paper_generated', label: 'Generated' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setTeacherActionFilter(opt.id)}
+                        className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
+                          teacherActionFilter === opt.id
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {teacherAnalytics.filteredLogs.length === 0 ? (
+                <div className="p-10 text-center text-sm text-slate-500">
+                  No teacher paper activity logs match the selected filters yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                        <th className="py-3 px-4">Date &amp; Time</th>
+                        <th className="py-3 px-4">Teacher</th>
+                        <th className="py-3 px-4">Action</th>
+                        <th className="py-3 px-4">Paper Title</th>
+                        <th className="py-3 px-4">Class · Subject</th>
+                        <th className="py-3 px-4">Paper Composition</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 text-sm">
+                      {teacherAnalytics.filteredLogs.map((log) => {
+                        const timeMs = parseTimestampMs(log.createdAt);
+                        const actionBadge =
+                          log.action === 'pdf_downloaded'
+                            ? {
+                                label: 'PDF Downloaded',
+                                cls: 'bg-rose-50 text-rose-800 border-rose-200',
+                              }
+                            : log.action === 'word_downloaded'
+                              ? {
+                                  label: 'Word (.docx) Downloaded',
+                                  cls: 'bg-blue-50 text-blue-800 border-blue-200',
+                                }
+                              : log.action === 'paper_published'
+                                ? {
+                                    label: 'Published to Students',
+                                    cls: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                                  }
+                                : log.action === 'paper_saved_draft'
+                                  ? {
+                                      label: 'Saved Paused / Print-Only',
+                                      cls: 'bg-amber-50 text-amber-800 border-amber-200',
+                                    }
+                                  : {
+                                      label: 'Paper Generated',
+                                      cls: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+                                    };
+
+                        return (
+                          <tr key={log.id} className="hover:bg-slate-50">
+                            <td className="py-3 px-4 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                              {timeMs ? new Date(timeMs).toLocaleString() : 'Just now'}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="font-medium text-slate-900">{log.teacherName}</div>
+                              <div className="text-xs text-slate-500">{log.teacherEmail}</div>
+                            </td>
+                            <td className="py-3 px-4 whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded border ${actionBadge.cls}`}
+                              >
+                                {actionBadge.label}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-medium text-slate-900">
+                              {log.paperTitle}
+                            </td>
+                            <td className="py-3 px-4 text-xs text-slate-600 whitespace-nowrap">
+                              <div>{log.grade} · {log.subject}</div>
+                              <div className="text-[11px] text-slate-500">
+                                {log.board === 'punjab_ptb' ? 'Punjab (PTB)' : 'FBISE (NBF)'}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-xs text-slate-700 tabular-nums whitespace-nowrap">
+                              {log.mcqCount} MCQs
+                              {log.shortCount > 0 ? ` · ${log.shortCount} Short` : ''}
+                              {log.longCount > 0 ? ` · ${log.longCount} Long` : ''}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       <DeveloperFooter />
@@ -2032,11 +2610,11 @@ export function AdminDashboard() {
         />
       )}
 
-      {showBrochureModal && (
+      {showMainAdminPlatformTools && showBrochureModal && (
         <PlatformBrochureModal onClose={() => setShowBrochureModal(false)} />
       )}
 
-      {showClassDeploymentsModal && (
+      {showMainAdminPlatformTools && showClassDeploymentsModal && (
         <ClassDeploymentsModal
           getIdToken={() => firebaseUser.getIdToken()}
           onClose={() => setShowClassDeploymentsModal(false)}

@@ -5,8 +5,8 @@ import { PortalGateway } from './components/PortalGateway';
 import { RoleAuthPortal } from './components/RoleAuthPortal';
 import { StudentDashboard } from './components/StudentDashboard';
 import { TeacherDashboard } from './components/TeacherDashboard';
-import { getActiveEditionClass } from './config/appEdition';
-import { GRADE_LABELS, UserRole } from './types';
+import { getActiveEditionClass, getEditionLabel } from './config/appEdition';
+import { UserRole } from './types';
 
 function AppContent() {
   const { authReady, firebaseUser, userProfile, profileLoaded, isAdmin, ensureBootstrappedAdmin } =
@@ -19,7 +19,7 @@ function AppContent() {
     if (activeEdition === 'All') {
       document.title = 'MeritExam — Academic MCQ Examination Portal';
     } else {
-      document.title = `MeritExam — ${GRADE_LABELS[activeEdition]} Examination Portal`;
+      document.title = `MeritExam — ${getEditionLabel(activeEdition)} Examination Portal`;
     }
   }, [activeEdition]);
 

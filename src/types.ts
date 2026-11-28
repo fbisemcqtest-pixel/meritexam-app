@@ -1089,4 +1089,26 @@ export function isSingleStudentGrade(grade: unknown): grade is GradeLevel {
   return typeof grade === 'string' && (GRADES as string[]).includes(grade.trim());
 }
 
+export type TeacherActivityAction =
+  | 'paper_generated'
+  | 'pdf_downloaded'
+  | 'word_downloaded'
+  | 'paper_published'
+  | 'paper_saved_draft';
 
+export interface TeacherActivity {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  teacherEmail: string;
+  action: TeacherActivityAction;
+  paperTitle: string;
+  grade: GradeLevel;
+  subject: SubjectName;
+  board: ExamBoard;
+  mcqCount: number;
+  shortCount: number;
+  longCount: number;
+  testId: string;
+  createdAt?: unknown;
+}

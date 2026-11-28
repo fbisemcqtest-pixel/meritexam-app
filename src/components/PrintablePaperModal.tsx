@@ -45,6 +45,7 @@ interface PrintablePaperModalProps {
   shortChoiceNote?: string;
   longChoiceNote?: string;
   defaultPaperStyle?: 'fbise_official' | 'apsacs_official' | 'standard';
+  onExportAction?: (format: 'pdf' | 'word', exportedTitle: string) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -80,6 +81,7 @@ export function PrintablePaperModal({
   shortChoiceNote = '',
   longChoiceNote = '',
   defaultPaperStyle,
+  onExportAction,
   onClose,
 }: PrintablePaperModalProps) {
   const isFbiseInitial = board === 'fbise_nbf';
@@ -209,6 +211,9 @@ export function PrintablePaperModal({
     setExportingPdf(true);
     try {
       await exportPaperToPdf(sheetRef.current, activeTitle, compactLayout, paperSize);
+      if (onExportAction) {
+        void Promise.resolve(onExportAction('pdf', activeTitle)).catch(() => {});
+      }
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'PDF export failed. Please try Print.');
     } finally {
@@ -283,6 +288,9 @@ export function PrintablePaperModal({
         separateSectionA,
         includeAnswerKey,
       });
+      if (onExportAction) {
+        void Promise.resolve(onExportAction('word', activeTitle)).catch(() => {});
+      }
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Word export failed.');
     } finally {

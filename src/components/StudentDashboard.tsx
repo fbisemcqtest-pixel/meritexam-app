@@ -22,11 +22,15 @@ import { useAuth } from '../context/AuthContext';
 import {
   getActiveEditionClass,
   getClassPathSlug,
+  getEditionAllowedGrades,
+  getEditionLabel,
+  getEditionShortBadge,
   isBuildLockedEdition,
+  isEditionRestricted,
+  isGradeAllowedInEdition,
 } from '../config/appEdition';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase';
 import {
-  GRADES,
   GRADE_LABELS,
   GradeLevel,
   MCQTest,
@@ -170,12 +174,13 @@ export function StudentDashboard() {
 
   const activeEdition = getActiveEditionClass();
   const buildLocked = isBuildLockedEdition();
-  const isSingleClassEdition = activeEdition !== 'All';
+  const isRestrictedEdition = isEditionRestricted(activeEdition);
+  const editionGrades = getEditionAllowedGrades(activeEdition);
+  const editionLabel = getEditionLabel(activeEdition);
+  const editionBadge = getEditionShortBadge(activeEdition);
 
   // Legacy 'All' class migration gate state
-  const [selectedClassToLock, setSelectedClassToLock] = useState<GradeLevel>(
-    isSingleClassEdition ? activeEdition : '9th',
-  );
+  const [selectedClassToLock, setSelectedClassToLock] = useState<GradeLevel>(editionGrades[0]);
   const [savingClassLock, setSavingClassLock] = useState(false);
   const [classLockError, setClassLockError] = useState<string | null>(null);
 
@@ -444,7 +449,7 @@ export function StudentDashboard() {
                   Choose Your Class (Required)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {(isSingleClassEdition ? [activeEdition] : GRADES).map((g) => {
+                  {editionGrades.map((g) => {
                     const active = selectedClassToLock === g;
                     return (
                       <button
@@ -502,7 +507,7 @@ export function StudentDashboard() {
     );
   }
 
-  if (isSingleClassEdition && userProfile.grade !== activeEdition) {
+  if (isRestrictedEdition && !isGradeAllowedInEdition(userProfile.grade, activeEdition)) {
     const ownClassSlug = getClassPathSlug(userProfile.grade as GradeLevel);
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -513,7 +518,7 @@ export function StudentDashboard() {
               <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-blue-600 to-indigo-600 shrink-0" />
               <span>MeritExam</span>
               <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
-                {activeEdition}
+                {editionBadge}
               </span>
             </div>
             <button
@@ -536,10 +541,10 @@ export function StudentDashboard() {
                 </div>
                 <div>
                   <h1 className="font-display text-xl font-bold text-slate-900">
-                    {GRADE_LABELS[activeEdition]} Portal Only
+                    {editionLabel} Portal Only
                   </h1>
                   <p className="text-sm text-slate-600 mt-1 leading-relaxed">
-                    This link is exclusively for <strong>{GRADE_LABELS[activeEdition]}</strong>. Your account is enrolled in{' '}
+                    This link is exclusively for <strong>{editionLabel}</strong>. Your account is enrolled in{' '}
                     <strong className="text-blue-800">{GRADE_LABELS[userProfile.grade as GradeLevel]}</strong>.
                   </p>
                 </div>
@@ -593,9 +598,9 @@ export function StudentDashboard() {
           <div className="font-display text-base sm:text-lg font-bold text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-blue-600 to-indigo-600 shrink-0" />
             <span>MeritExam</span>
-            {isSingleClassEdition && (
+            {isRestrictedEdition && (
               <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
-                {activeEdition}
+                {editionBadge}
               </span>
             )}
           </div>

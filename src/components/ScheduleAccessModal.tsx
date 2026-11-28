@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { CalendarClock, Check, CopyPlus, X } from 'lucide-react';
-import { GRADES, GRADE_LABELS, GradeLevel, MCQTest } from '../types';
-import { publishMCQTest, updateTestScheduleAndAccess } from '../services/mcqService';
+import { GRADE_LABELS, GradeLevel, MCQTest } from '../types';
+import { getActiveEditionClass, getEditionAllowedGrades } from '../config/appEdition';
+import { useAuth } from '../context/AuthContext';
+import {
+  publishMCQTest,
+  recordTeacherActivity,
+  updateTestScheduleAndAccess,
+} from '../services/mcqService';
 
 interface ScheduleAccessModalProps {
   test: MCQTest;
@@ -30,6 +36,7 @@ export function ScheduleAccessModal({
   currentUser,
   onClose,
 }: ScheduleAccessModalProps) {
+  const { firebaseUser, userProfile } = useAuth();
   const [isActive, setIsActive] = useState(initialActive ?? test.isActive);
   const [allowedGrades, setAllowedGrades] = useState<GradeLevel[]>(
     test.allowedGrades && test.allowedGrades.length > 0 ? test.allowedGrades : [test.grade],
@@ -91,7 +98,7 @@ export function ScheduleAccessModal({
     setSaving(true);
     try {
       if (createFreshReTest && currentUser) {
-        await publishMCQTest({
+        const created = await publishMCQTest({
           title: test.title.includes('(Re-Test)') ? test.title : `${test.title} (Re-Test)`,
           board: test.board,
           schoolName: test.schoolName,
@@ -119,6 +126,23 @@ export function ScheduleAccessModal({
           createdByName: currentUser.name,
           createdByRole: currentUser.role,
         });
+        const teacherEmail = firebaseUser?.email || userProfile?.email || '';
+        if (currentUser.role === 'teacher' && teacherEmail) {
+          void recordTeacherActivity({
+            teacherId: currentUser.uid,
+            teacherName: currentUser.name,
+            teacherEmail,
+            action: isActive ? 'paper_published' : 'paper_saved_draft',
+            paperTitle: created.title,
+            grade: test.grade,
+            subject: test.subject,
+            board: test.board,
+            mcqCount: test.questionCount ?? test.questions?.length ?? 0,
+            shortCount: test.shortQuestions?.length ?? test.shortQuestionCount ?? 0,
+            longCount: test.longQuestions?.length ?? test.longQuestionCount ?? 0,
+            testId: created.id,
+          }).catch(() => {});
+        }
       } else {
         await updateTestScheduleAndAccess(test.id, {
           isActive,
@@ -127,6 +151,23 @@ export function ScheduleAccessModal({
           allowedGrades: nextAllowedGrades,
           fallbackGrade: test.grade,
         });
+        const teacherEmail = firebaseUser?.email || userProfile?.email || '';
+        if (currentUser?.role === 'teacher' && !test.isActive && isActive && teacherEmail) {
+          void recordTeacherActivity({
+            teacherId: currentUser.uid,
+            teacherName: currentUser.name,
+            teacherEmail,
+            action: 'paper_published',
+            paperTitle: test.title,
+            grade: test.grade,
+            subject: test.subject,
+            board: test.board,
+            mcqCount: test.questionCount ?? test.questions?.length ?? 0,
+            shortCount: test.shortQuestions?.length ?? test.shortQuestionCount ?? 0,
+            longCount: test.longQuestions?.length ?? test.longQuestionCount ?? 0,
+            testId: test.id,
+          }).catch(() => {});
+        }
       }
       onClose();
     } catch (err) {
@@ -209,7 +250,7 @@ export function ScheduleAccessModal({
               Permitted Classes (Only selected classes see this paper)
             </label>
             <div className="flex flex-wrap gap-2">
-              {GRADES.map((g) => {
+              {getEditionAllowedGrades(getActiveEditionClass()).map((g) => {
                 const selected = allowedGrades.includes(g);
                 return (
                   <button

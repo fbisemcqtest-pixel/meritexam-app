@@ -13,10 +13,14 @@ import { useAuth } from '../context/AuthContext';
 import {
   getActiveEditionClass,
   getClassPathSlug,
+  getEditionAllowedGrades,
+  getEditionLabel,
+  getEditionShortBadge,
   isBuildLockedEdition,
+  isEditionRestricted,
+  isGradeAllowedInEdition,
 } from '../config/appEdition';
 import {
-  GRADES,
   GRADE_LABELS,
   GradeLevel,
   SUBJECT_GROUPS,
@@ -54,18 +58,25 @@ export function RoleAuthPortal({
 
   const activeEdition = getActiveEditionClass();
   const buildLocked = isBuildLockedEdition();
-  const isSingleClassEdition = activeEdition !== 'All';
+  const isRestrictedEdition = isEditionRestricted(activeEdition);
+  const editionGrades = getEditionAllowedGrades(activeEdition);
+  const isSingleClassEdition = editionGrades.length === 1;
+  const singleLockedGrade = isSingleClassEdition ? editionGrades[0] : null;
+  const editionLabel = getEditionLabel(activeEdition);
+  const defaultEditionGrade: GradeLevel = editionGrades[0];
 
   const [mode, setMode] = useState<'login' | 'register'>(
     portalRole === 'admin' ? 'login' : initialMode,
   );
   const [fullName, setFullName] = useState('');
   const [grade, setGrade] = useState<GradeLevel | 'All'>(
-    isSingleClassEdition ? activeEdition : portalRole === 'teacher' ? 'All' : '9th',
+    isSingleClassEdition
+      ? defaultEditionGrade
+      : portalRole === 'teacher'
+        ? 'All'
+        : defaultEditionGrade,
   );
-  const [pendingClassChoice, setPendingClassChoice] = useState<GradeLevel>(
-    isSingleClassEdition ? activeEdition : '9th',
-  );
+  const [pendingClassChoice, setPendingClassChoice] = useState<GradeLevel>(defaultEditionGrade);
   const [savingPendingClass, setSavingPendingClass] = useState(false);
   const [pendingClassError, setPendingClassError] = useState<string | null>(null);
   const [subject, setSubject] = useState<SubjectName | 'All'>('Physics');
@@ -75,17 +86,22 @@ export function RoleAuthPortal({
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isSingleClassEdition) {
-      setGrade(activeEdition);
-      setPendingClassChoice(activeEdition);
+    if (singleLockedGrade) {
+      setGrade(singleLockedGrade);
+      setPendingClassChoice(singleLockedGrade);
       return;
     }
-    if (portalRole === 'student' && !isSingleStudentGrade(grade)) {
-      setGrade('9th');
-    } else if (portalRole === 'teacher' && grade !== 'All') {
+    if (!editionGrades.includes(pendingClassChoice)) {
+      setPendingClassChoice(editionGrades[0]);
+    }
+    if (portalRole === 'student') {
+      if (!isSingleStudentGrade(grade) || !editionGrades.includes(grade as GradeLevel)) {
+        setGrade(editionGrades[0]);
+      }
+    } else if (portalRole === 'teacher' && grade !== 'All' && !editionGrades.includes(grade as GradeLevel)) {
       setGrade('All');
     }
-  }, [portalRole, isSingleClassEdition, activeEdition]);
+  }, [portalRole, singleLockedGrade, activeEdition]);
 
   const roleTitle =
     portalRole === 'student'
@@ -305,15 +321,11 @@ export function RoleAuthPortal({
                         aria-label="Select your enrolled class"
                         className="flex-1 px-3 py-2 text-xs font-medium bg-white border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                       >
-                        {isSingleClassEdition ? (
-                          <option value={activeEdition}>{GRADE_LABELS[activeEdition]}</option>
-                        ) : (
-                          GRADES.map((g) => (
-                            <option key={g} value={g}>
-                              {GRADE_LABELS[g]}
-                            </option>
-                          ))
-                        )}
+                        {editionGrades.map((g) => (
+                          <option key={g} value={g}>
+                            {GRADE_LABELS[g]}
+                          </option>
+                        ))}
                       </select>
                       <button
                         type="button"
@@ -401,12 +413,12 @@ export function RoleAuthPortal({
       );
     }
 
-    // Cross-class mismatch on a single-class portal link/domain
+    // Cross-class mismatch on a class-restricted portal link/domain
     if (
-      isSingleClassEdition &&
+      isRestrictedEdition &&
       userProfile.role === 'student' &&
       isSingleStudentGrade(userProfile.grade) &&
-      userProfile.grade !== activeEdition
+      !isGradeAllowedInEdition(userProfile.grade, activeEdition)
     ) {
       const ownClassSlug = getClassPathSlug(userProfile.grade);
       return (
@@ -419,12 +431,12 @@ export function RoleAuthPortal({
                 <div className="flex items-center gap-3 mb-4">
                   <AlertCircle className="w-6 h-6 text-amber-600 shrink-0" />
                   <h2 className="font-display text-xl font-bold text-slate-900">
-                    Dedicated {GRADE_LABELS[activeEdition]} Portal
+                    Dedicated {editionLabel} Portal
                   </h2>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed mb-6">
                   This portal is strictly for{' '}
-                  <span className="font-semibold text-slate-900">{GRADE_LABELS[activeEdition]}</span>{' '}
+                  <span className="font-semibold text-slate-900">{editionLabel}</span>{' '}
                   students. Your account ({userProfile.email}) is registered in{' '}
                   <span className="font-semibold text-blue-800">{GRADE_LABELS[userProfile.grade]}</span>.
                 </p>
@@ -657,38 +669,37 @@ export function RoleAuthPortal({
                     </label>
                     <select
                       value={
-                        isSingleClassEdition
-                          ? activeEdition
-                          : portalRole === 'student' && !isSingleStudentGrade(grade)
-                            ? '9th'
+                        singleLockedGrade
+                          ? singleLockedGrade
+                          : portalRole === 'student' &&
+                              (!isSingleStudentGrade(grade) || !editionGrades.includes(grade as GradeLevel))
+                            ? defaultEditionGrade
                             : grade
                       }
                       disabled={isSingleClassEdition}
                       onChange={(e) => setGrade(e.target.value as GradeLevel | 'All')}
                       className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-700"
                     >
-                      {isSingleClassEdition ? (
-                        <option value={activeEdition}>{GRADE_LABELS[activeEdition]}</option>
-                      ) : (
-                        <>
-                          {GRADES.map((g) => (
-                            <option key={g} value={g}>
-                              {GRADE_LABELS[g]}
-                            </option>
-                          ))}
-                          {portalRole === 'teacher' && (
-                            <option value="All">All Classes (9th, 10th, 1st A, 2nd Year)</option>
-                          )}
-                        </>
+                      {editionGrades.map((g) => (
+                        <option key={g} value={g}>
+                          {GRADE_LABELS[g]}
+                        </option>
+                      ))}
+                      {!isSingleClassEdition && portalRole === 'teacher' && (
+                        <option value="All">
+                          All ({isRestrictedEdition ? getEditionShortBadge(activeEdition) : '9th, 10th, 1st A, 2nd Year'})
+                        </option>
                       )}
                     </select>
-                    {isSingleClassEdition ? (
+                    {isSingleClassEdition && singleLockedGrade ? (
                       <p className="text-[11px] text-blue-700 font-medium mt-1">
-                        Locked to {GRADE_LABELS[activeEdition]} on this portal.
+                        Locked to {GRADE_LABELS[singleLockedGrade]} on this portal.
                       </p>
                     ) : portalRole === 'student' ? (
                       <p className="text-[11px] text-slate-500 mt-1">
-                        Each student account is restricted to one enrolled class only.
+                        {isRestrictedEdition
+                          ? `Select your class in ${editionLabel}. Each student account has one enrolled class.`
+                          : 'Each student account is restricted to one enrolled class only.'}
                       </p>
                     ) : null}
                   </div>
@@ -776,7 +787,7 @@ function TopBar({
           <span>MeritExam</span>
           {activeEdition !== 'All' && (
             <span className="px-1.5 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 rounded">
-              {activeEdition}
+              {getEditionShortBadge(activeEdition)}
             </span>
           )}
         </button>

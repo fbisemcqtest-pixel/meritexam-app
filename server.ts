@@ -113,13 +113,27 @@ function addDirectoryToZip(zip: JSZip, baseDir: string, currentDir: string) {
 }
 
 interface EditionZipConfig {
-  grade: '9th' | '10th' | '1st A' | '2nd Year' | 'All';
+  grade: 'SSC' | 'HSSC' | '9th' | '10th' | '1st A' | '2nd Year' | 'All';
   titleLabel: string;
   zipFilename: string;
 }
 
 function resolveEditionZipConfig(raw: unknown): EditionZipConfig {
   const val = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (val === 'ssc' || val === 'matric') {
+    return {
+      grade: 'SSC',
+      titleLabel: 'SSC (9th & 10th Classes)',
+      zipFilename: 'meritexam-ssc.zip',
+    };
+  }
+  if (val === 'hssc' || val === 'inter' || val === 'intermediate') {
+    return {
+      grade: 'HSSC',
+      titleLabel: 'HSSC (1st Year & 2nd Year)',
+      zipFilename: 'meritexam-hssc.zip',
+    };
+  }
   if (val === '9th' || val === '9') {
     return {
       grade: '9th',

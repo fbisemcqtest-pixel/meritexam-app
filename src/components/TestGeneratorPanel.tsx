@@ -7,7 +7,6 @@ import {
   EXAM_BOARDS,
   EXAM_TYPE_PRESETS,
   ExamBoard,
-  GRADES,
   GRADE_LABELS,
   GradeLevel,
   MAX_TOPIC_LENGTH,
@@ -19,8 +18,13 @@ import {
   TestDeliveryOverride,
   getSyllabusChapters,
 } from '../types';
-import { getActiveEditionClass } from '../config/appEdition';
-import { generateMCQsFromServer, publishMCQTest } from '../services/mcqService';
+import { getActiveEditionClass, getEditionAllowedGrades } from '../config/appEdition';
+import { useAuth } from '../context/AuthContext';
+import {
+  generateMCQsFromServer,
+  publishMCQTest,
+  recordTeacherActivity,
+} from '../services/mcqService';
 import {
   FBISE_PATTERN_MODES,
   FbisePatternMode,
@@ -56,11 +60,16 @@ export function TestGeneratorPanel({
   systemSettings,
   onPublished,
 }: TestGeneratorPanelProps) {
+  const { firebaseUser, userProfile } = useAuth();
   const activeEdition = getActiveEditionClass();
+  const editionGrades = getEditionAllowedGrades(activeEdition);
   const effectiveLockedGrade: GradeLevel | undefined =
-    lockedGrade ?? (activeEdition !== 'All' ? activeEdition : undefined);
+    lockedGrade ?? (editionGrades.length === 1 ? editionGrades[0] : undefined);
   const initialGrade: GradeLevel =
-    effectiveLockedGrade ?? (defaultGrade && defaultGrade !== 'All' ? defaultGrade : '9th');
+    effectiveLockedGrade ??
+    (defaultGrade && defaultGrade !== 'All' && editionGrades.includes(defaultGrade)
+      ? defaultGrade
+      : editionGrades[0]);
   const initialSubject: SubjectName =
     defaultSubject && defaultSubject !== 'All' ? defaultSubject : 'Physics';
   const initialPattern = getOfficialPattern('fbise_nbf', initialGrade, initialSubject, 'reformed_50_50');
@@ -211,17 +220,36 @@ export function TestGeneratorPanel({
           }
         },
       );
+      const nextLongQuestions = activeLongMarksList
+        ? res.longQuestions.map((lq, i) => ({
+            ...lq,
+            marks: activeLongMarksList[i] ?? lq.marks,
+          }))
+        : res.longQuestions;
       setTitle(res.title);
       setQuestions(res.questions);
       setShortQuestions(res.shortQuestions);
-      setLongQuestions(
-        activeLongMarksList
-          ? res.longQuestions.map((lq, i) => ({
-              ...lq,
-              marks: activeLongMarksList[i] ?? lq.marks,
-            }))
-          : res.longQuestions,
-      );
+      setLongQuestions(nextLongQuestions);
+
+      if (creatorRole === 'teacher') {
+        const teacherEmail = firebaseUser?.email || userProfile?.email || '';
+        if (teacherEmail) {
+          void recordTeacherActivity({
+            teacherId: creatorUid,
+            teacherName: creatorName,
+            teacherEmail,
+            action: 'paper_generated',
+            paperTitle: res.title || `${grade} ${subject} Paper`,
+            grade,
+            subject,
+            board,
+            mcqCount: res.questions.length,
+            shortCount: res.shortQuestions.length,
+            longCount: nextLongQuestions.length,
+            testId: '',
+          }).catch(() => {});
+        }
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to generate paper.');
     } finally {
@@ -388,7 +416,7 @@ export function TestGeneratorPanel({
         (paperHeaderStyle === 'apsacs_official'
           ? 'Army Public Schools & Colleges System'
           : '');
-      await publishMCQTest({
+      const createdTest = await publishMCQTest({
         title: title.trim() || `${grade} ${subject} Assessment`,
         board,
         schoolName: effectiveSchoolName,
@@ -416,6 +444,26 @@ export function TestGeneratorPanel({
         createdByName: creatorName,
         createdByRole: creatorRole,
       });
+
+      if (creatorRole === 'teacher') {
+        const teacherEmail = firebaseUser?.email || userProfile?.email || '';
+        if (teacherEmail) {
+          void recordTeacherActivity({
+            teacherId: creatorUid,
+            teacherName: creatorName,
+            teacherEmail,
+            action: publishToStudents ? 'paper_published' : 'paper_saved_draft',
+            paperTitle: createdTest.title,
+            grade,
+            subject,
+            board,
+            mcqCount: questions.length,
+            shortCount: shortQuestions.length,
+            longCount: longQuestions.length,
+            testId: createdTest.id,
+          }).catch(() => {});
+        }
+      }
       const summaryParts: string[] = [];
       if (questions.length > 0) summaryParts.push(`${questions.length} MCQs`);
       if (shortQuestions.length > 0) summaryParts.push(`${shortQuestions.length} Short`);
@@ -654,7 +702,7 @@ export function TestGeneratorPanel({
               }}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-700"
             >
-              {(effectiveLockedGrade ? [effectiveLockedGrade] : GRADES).map((g) => (
+              {(effectiveLockedGrade ? [effectiveLockedGrade] : editionGrades).map((g) => (
                 <option key={g} value={g}>
                   {GRADE_LABELS[g]}
                 </option>
@@ -1256,7 +1304,7 @@ export function TestGeneratorPanel({
                 <span className="text-[11px] font-semibold text-slate-700 mr-1">
                   Permitted Classes:
                 </span>
-                {(effectiveLockedGrade ? [effectiveLockedGrade] : GRADES).map((g) => {
+                {(effectiveLockedGrade ? [effectiveLockedGrade] : editionGrades).map((g) => {
                   const checked = effectiveLockedGrade ? g === effectiveLockedGrade : allowedGrades.includes(g);
                   return (
                     <button
@@ -1851,6 +1899,25 @@ export function TestGeneratorPanel({
           shortChoiceNote={shortChoiceNote.trim()}
           longChoiceNote={longChoiceNote.trim()}
           defaultPaperStyle={paperHeaderStyle}
+          onExportAction={(format, exportedTitle) => {
+            if (creatorRole !== 'teacher') return;
+            const teacherEmail = firebaseUser?.email || userProfile?.email || '';
+            if (!teacherEmail) return;
+            void recordTeacherActivity({
+              teacherId: creatorUid,
+              teacherName: creatorName,
+              teacherEmail,
+              action: format === 'pdf' ? 'pdf_downloaded' : 'word_downloaded',
+              paperTitle: exportedTitle || `${grade} ${subject} Paper`,
+              grade,
+              subject,
+              board,
+              mcqCount: questions.length,
+              shortCount: shortQuestions.length,
+              longCount: longQuestions.length,
+              testId: '',
+            }).catch(() => {});
+          }}
           onClose={() => setShowPrintModal(false)}
         />
       )}

@@ -15,13 +15,16 @@ export function parseRecordTimestampMs(value: unknown): number | null {
     return Number.isNaN(ms) ? null : ms;
   }
   if (typeof value === 'object') {
-    const maybeTs = value as { toDate?: () => Date; seconds?: number };
+    const maybeTs = value as { toDate?: () => Date; seconds?: number; _seconds?: number };
     if (typeof maybeTs.toDate === 'function') {
       const ms = maybeTs.toDate().getTime();
       return Number.isNaN(ms) ? null : ms;
     }
     if (typeof maybeTs.seconds === 'number') {
       return maybeTs.seconds * 1000;
+    }
+    if (typeof maybeTs._seconds === 'number') {
+      return maybeTs._seconds * 1000;
     }
   }
   return null;

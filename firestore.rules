@@ -302,6 +302,33 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidTeacherActivity(data) {
+      return data.keys().hasAll([
+          'id', 'teacherId', 'teacherName', 'teacherEmail', 'action',
+          'paperTitle', 'grade', 'subject', 'board',
+          'mcqCount', 'shortCount', 'longCount', 'testId', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'teacherId', 'teacherName', 'teacherEmail', 'action',
+          'paperTitle', 'grade', 'subject', 'board',
+          'mcqCount', 'shortCount', 'longCount', 'testId', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.teacherId) &&
+        data.teacherName is string && data.teacherName.size() >= 1 && data.teacherName.size() <= 120 &&
+        data.teacherEmail is string && data.teacherEmail.size() >= 3 && data.teacherEmail.size() <= 200 &&
+        data.action in ['paper_generated', 'pdf_downloaded', 'word_downloaded', 'paper_published', 'paper_saved_draft'] &&
+        data.paperTitle is string && data.paperTitle.size() >= 1 && data.paperTitle.size() <= 160 &&
+        data.grade in ['9th', '10th', '1st A', '2nd Year'] &&
+        isValidSubject(data.subject) &&
+        data.board in ['fbise_nbf', 'punjab_ptb'] &&
+        data.mcqCount is int && data.mcqCount >= 0 && data.mcqCount <= 200 &&
+        data.shortCount is int && data.shortCount >= 0 && data.shortCount <= 50 &&
+        data.longCount is int && data.longCount >= 0 && data.longCount <= 25 &&
+        data.testId is string && data.testId.size() <= 128 &&
+        data.createdAt is timestamp;
+    }
+
     // -------------------------------------------------------------------------
     // Collection Rules
     // -------------------------------------------------------------------------
@@ -510,6 +537,30 @@ service cloud.firestore {
         );
 
       allow delete: if isValidId(attemptId) && isAdmin();
+    }
+
+    match /teacherActivities/{activityId} {
+      allow get: if isValidId(activityId) && (
+        isAdmin() ||
+        (isApprovedTeacher() && existing().teacherId == request.auth.uid)
+      );
+
+      allow list: if isAdmin() || (
+        isSignedIn() && existing().teacherId == request.auth.uid
+      );
+
+      allow create: if isVerifiedEmail() &&
+        isValidId(activityId) &&
+        isValidTeacherActivity(incoming()) &&
+        incoming().id == activityId &&
+        incoming().teacherId == request.auth.uid &&
+        incoming().teacherEmail == request.auth.token.email &&
+        incoming().createdAt == request.time &&
+        (isAdmin() || isApprovedTeacher());
+
+      allow update: if false;
+
+      allow delete: if isValidId(activityId) && isAdmin();
     }
   }
 }

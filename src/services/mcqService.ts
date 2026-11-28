@@ -28,6 +28,8 @@ import {
   SubjectName,
   SubjectiveQuestion,
   SystemSettings,
+  TeacherActivity,
+  TeacherActivityAction,
   TestAttempt,
   TestDeliveryOverride,
   UserRole,
@@ -565,6 +567,16 @@ export async function updateTestScheduleAndAccess(
   }
 }
 
+export async function setTestClosingTime(
+  testId: string,
+  scheduledEndAtIso: string,
+): Promise<void> {
+  await updateDoc(doc(db, 'tests', testId), {
+    scheduledEndAt: scheduledEndAtIso.trim().slice(0, 64),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function updateTestDeliveryOverride(
   testId: string,
   deliveryMode: TestDeliveryOverride,
@@ -882,4 +894,58 @@ export async function toggleStudentAnswerKeyReview(
   );
 }
 
+export async function recordTeacherActivity(input: {
+  teacherId: string;
+  teacherName: string;
+  teacherEmail: string;
+  action: TeacherActivityAction;
+  paperTitle: string;
+  grade: GradeLevel;
+  subject: SubjectName;
+  board?: ExamBoard;
+  mcqCount: number;
+  shortCount?: number;
+  longCount?: number;
+  testId?: string;
+}): Promise<TeacherActivity | null> {
+  const cleanEmail = input.teacherEmail.trim().slice(0, 200);
+  if (!input.teacherId.trim() || cleanEmail.length < 3) {
+    return null;
+  }
+
+  const id = generateSafeId('tact');
+  const clampInt = (val: unknown, max: number) => {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(Math.max(Math.round(n), 0), max);
+  };
+
+  const activityDoc: TeacherActivity = {
+    id,
+    teacherId: input.teacherId.trim().slice(0, 128),
+    teacherName: input.teacherName.trim().slice(0, MAX_NAME_LENGTH) || 'Faculty',
+    teacherEmail: cleanEmail,
+    action: input.action,
+    paperTitle:
+      input.paperTitle.trim().slice(0, MAX_TITLE_LENGTH) ||
+      `${input.grade} ${input.subject} Paper`,
+    grade: input.grade,
+    subject: input.subject,
+    board: input.board === 'punjab_ptb' ? 'punjab_ptb' : 'fbise_nbf',
+    mcqCount: clampInt(input.mcqCount, 200),
+    shortCount: clampInt(input.shortCount ?? 0, 50),
+    longCount: clampInt(input.longCount ?? 0, 25),
+    testId: (input.testId ?? '').trim().slice(0, 128),
+    createdAt: serverTimestamp(),
+  };
+
+  try {
+    await setDoc(doc(db, 'teacherActivities', id), activityDoc);
+    return activityDoc;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `teacherActivities/${id}`);
+  }
+}
+
 export { collection };
+

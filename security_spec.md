@@ -7,6 +7,7 @@
 4. **Test Creation Integrity**: Only `isAdmin()` or an `approved` Teacher may create `/tests/{testId}`. Only `isAdmin()` or the creating Teacher may edit/delete a test.
 5. **Immutable Submission Records**: Once a student submits an `/attempts/{attemptId}` document, the student cannot modify `answers`, `score`, `resultReleased`, or `status`. Only `isAdmin()` (or the test's approved Teacher when authorized) may release results (`resultReleased: true`, `status: 'reviewed'`).
 6. **Temporal & Volumetric Integrity**: All `createdAt`, `submittedAt`, and `updatedAt` timestamps MUST equal `request.time`. All string fields have bounded `.size()` limits and all document IDs match `^[a-zA-Z0-9_\-]+$`.
+7. **Teacher Activity Audit Integrity**: Immutable `/teacherActivities/{activityId}` records may only be created by verified approved teachers (or admins) with `teacherId == request.auth.uid`, `teacherEmail == request.auth.token.email`, and `createdAt == request.time`. Updates are forbidden (`update: false`); only Admins may list all records or delete audit logs.
 
 ## 2. Dirty Dozen Adversarial Payloads (Expected: PERMISSION_DENIED)
 1. **Self-Approved Student Registration**: Creating `/users/u1` with `role: 'student', status: 'approved'`.
@@ -21,3 +22,5 @@
 10. **Student Forcing Instant Result in Delayed Mode**: Creating `/attempts/a1` with `resultReleased: true` when `systemSettings/global.resultMode == 'admin_review'`.
 11. **Student Self-Grading Update**: Student attempting to update `score: 100` or `resultReleased: true` on `/attempts/a1`.
 12. **Resource Exhaustion / ID Poisoning**: Creating `/tests/<1500-char-invalid-id>` or `title` exceeding 160 characters.
+13. **Teacher Activity Impersonation / Tampering**: Teacher creating `/teacherActivities/act1` with another `teacherId` or attempting to `update`/`delete` an existing activity log.
+

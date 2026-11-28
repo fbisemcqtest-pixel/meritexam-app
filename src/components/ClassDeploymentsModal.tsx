@@ -44,14 +44,14 @@ export function ClassDeploymentsModal({ getIdToken, onClose }: ClassDeploymentsM
 
   const linksSummaryText = useMemo(() => {
     const lines = [
-      'MeritExam — 5 Portal Links (4 Class-Wise + 1 Complete All-Classes)',
+      'MeritExam — Portal Links (SSC, HSSC, Class-Wise & Complete)',
       '====================================================================',
       ...CLASS_EDITIONS.map(
         (ed, idx) =>
           `${idx + 1}. ${ed.title} / ${ed.urduTitle}\n   ${origin}${ed.slug}`,
       ),
       '',
-      'نوٹ: چاروں کلاسز کے علیحدہ لنکس اور پانچواں مکمل لنک (چاروں کلاسز اکٹھی) یہاں موجود ہیں۔',
+      'نوٹ: SSC (9th & 10th)، HSSC (1st & 2nd Year)، انفرادی کلاسز اور مکمل پورٹل کے لنکس یہاں موجود ہیں۔',
     ];
     return lines.join('\n');
   }, [origin]);
@@ -80,6 +80,12 @@ export function ClassDeploymentsModal({ getIdToken, onClose }: ClassDeploymentsM
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || `Failed to download ${ed.zipFilename}.`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('zip') && !contentType.includes('octet-stream')) {
+        throw new Error(
+          'ZIP export works from your AI Studio Preview link (not static Netlify hosting). Open your AI Studio app URL as Admin to download the updated class ZIPs.',
+        );
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -117,10 +123,10 @@ export function ClassDeploymentsModal({ getIdToken, onClose }: ClassDeploymentsM
             </div>
             <div>
               <h2 className="font-display text-lg sm:text-xl font-bold text-slate-900">
-                5 Portal Links &amp; Separate GitHub Deployment ZIPs
+                Portal Links &amp; Separate GitHub Deployment ZIPs
               </h2>
               <p className="text-xs text-slate-600 mt-0.5">
-                4 dedicated single-class editions (9th, 10th, 1st Year, 2nd Year) + 1 Complete All-Classes edition.
+                SSC (9th &amp; 10th), HSSC (1st &amp; 2nd Year), 4 single-class editions, and 1 Complete All-Classes edition.
               </p>
             </div>
           </div>
@@ -129,16 +135,16 @@ export function ClassDeploymentsModal({ getIdToken, onClose }: ClassDeploymentsM
             type="button"
             onClick={onClose}
             className="p-2 text-slate-500 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
-            aria-label="Close 5 Links & ZIPs modal"
+            aria-label="Close portal links and ZIPs modal"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Copy All 5 Links Strip */}
+        {/* Copy All Links Strip */}
         <div className="px-5 sm:px-6 py-3 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 shrink-0">
           <p className="text-xs text-slate-600">
-            Share direct links right away, or download pre-locked ZIPs to deploy each class on its own GitHub + Domain + Free Firebase.
+            Share direct links right away, or download pre-locked ZIPs to deploy SSC, HSSC, or single classes on their own GitHub + Domain + Free Firebase.
           </p>
           <button
             type="button"
@@ -152,12 +158,12 @@ export function ClassDeploymentsModal({ getIdToken, onClose }: ClassDeploymentsM
             {copiedKey === 'all_5_links' ? (
               <>
                 <Check className="w-3.5 h-3.5" />
-                All 5 Links Copied!
+                All Links Copied!
               </>
             ) : (
               <>
                 <Copy className="w-3.5 h-3.5" />
-                Copy All 5 Links
+                Copy All Links
               </>
             )}
           </button>

@@ -17,14 +17,20 @@ import {
   where,
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { getActiveEditionClass } from '../config/appEdition';
+import {
+  getActiveEditionClass,
+  getEditionAllowedGrades,
+  getEditionShortBadge,
+  isEditionRestricted,
+} from '../config/appEdition';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase';
 import {
   deleteMCQTest,
+  recordTeacherActivity,
   releaseAttemptResult,
   toggleTestActiveStatus,
 } from '../services/mcqService';
-import { MCQTest, TestAttempt, getAttemptBreakdown } from '../types';
+import { GradeLevel, MCQTest, TestAttempt, getAttemptBreakdown } from '../types';
 import { TestGeneratorPanel } from './TestGeneratorPanel';
 import { TestRunner } from './TestRunner';
 import { PrintablePaperModal } from './PrintablePaperModal';
@@ -33,7 +39,7 @@ import { DeveloperFooter } from './DeveloperFooter';
 import { getEffectiveTestEndMs } from '../utils/studentRecord';
 
 export function TeacherDashboard() {
-  const { userProfile, systemSettings, logout } = useAuth();
+  const { firebaseUser, userProfile, systemSettings, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'create' | 'bank' | 'submissions'>('create');
   const [myTests, setMyTests] = useState<MCQTest[]>([]);
   const [submissions, setSubmissions] = useState<TestAttempt[]>([]);
@@ -95,15 +101,17 @@ export function TeacherDashboard() {
   }, [userProfile]);
 
   const activeEdition = getActiveEditionClass();
-  const isSingleClassEdition = activeEdition !== 'All';
-  const visibleTests = isSingleClassEdition
+  const isRestrictedEdition = isEditionRestricted(activeEdition);
+  const editionGrades = getEditionAllowedGrades(activeEdition);
+  const singleLockedGrade = editionGrades.length === 1 ? editionGrades[0] : undefined;
+  const visibleTests = isRestrictedEdition
     ? myTests.filter((t) => {
         const allowed = t.allowedGrades && t.allowedGrades.length > 0 ? t.allowedGrades : [t.grade];
-        return allowed.includes(activeEdition);
+        return allowed.some((g) => editionGrades.includes(g));
       })
     : myTests;
-  const visibleSubmissions = isSingleClassEdition
-    ? submissions.filter((s) => s.grade === activeEdition)
+  const visibleSubmissions = isRestrictedEdition
+    ? submissions.filter((s) => editionGrades.includes(s.grade as GradeLevel))
     : submissions;
   const teacherPaperCreationAllowed = systemSettings.allowTeacherPaperCreation !== false;
 
@@ -129,9 +137,9 @@ export function TeacherDashboard() {
           <div className="font-display text-base sm:text-lg font-bold text-slate-900 whitespace-nowrap shrink-0 inline-flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-xs bg-gradient-to-br from-teal-600 to-emerald-600 shrink-0" />
             <span>MeritExam Teacher</span>
-            {isSingleClassEdition && (
+            {isRestrictedEdition && (
               <span className="px-2 py-0.5 text-[11px] font-bold bg-teal-50 text-teal-800 border border-teal-200 rounded">
-                {activeEdition}
+                {getEditionShortBadge(activeEdition)}
               </span>
             )}
           </div>
@@ -254,8 +262,12 @@ export function TeacherDashboard() {
               creatorUid={userProfile.uid}
               creatorName={userProfile.fullName}
               creatorRole="teacher"
-              defaultGrade={isSingleClassEdition ? activeEdition : userProfile.grade}
-              lockedGrade={isSingleClassEdition ? activeEdition : undefined}
+              defaultGrade={
+                userProfile.grade !== 'All' && editionGrades.includes(userProfile.grade as GradeLevel)
+                  ? userProfile.grade
+                  : editionGrades[0]
+              }
+              lockedGrade={singleLockedGrade}
               defaultSubject={userProfile.subject}
               systemSettings={systemSettings}
               onPublished={() => setActiveTab('bank')}
@@ -401,7 +413,26 @@ export function TeacherDashboard() {
                                   expiredNotice: true,
                                 });
                               } else {
-                                void toggleTestActiveStatus(t.id, !t.isActive);
+                                const activating = !t.isActive;
+                                void toggleTestActiveStatus(t.id, activating).then(() => {
+                                  const teacherEmail = firebaseUser?.email || userProfile.email || '';
+                                  if (activating && teacherEmail) {
+                                    void recordTeacherActivity({
+                                      teacherId: userProfile.uid,
+                                      teacherName: userProfile.fullName,
+                                      teacherEmail,
+                                      action: 'paper_published',
+                                      paperTitle: t.title,
+                                      grade: t.grade,
+                                      subject: t.subject,
+                                      board: t.board,
+                                      mcqCount: t.questionCount ?? t.questions?.length ?? 0,
+                                      shortCount: t.shortQuestions?.length ?? t.shortQuestionCount ?? 0,
+                                      longCount: t.longQuestions?.length ?? t.longQuestionCount ?? 0,
+                                      testId: t.id,
+                                    }).catch(() => {});
+                                  }
+                                });
                               }
                             }}
                             className="text-xs font-semibold text-slate-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
@@ -582,6 +613,24 @@ export function TeacherDashboard() {
           longQuestions={printingTest.longQuestions}
           shortChoiceNote={printingTest.shortChoiceNote}
           longChoiceNote={printingTest.longChoiceNote}
+          onExportAction={(format, exportedTitle) => {
+            const teacherEmail = firebaseUser?.email || userProfile.email || '';
+            if (!teacherEmail) return;
+            void recordTeacherActivity({
+              teacherId: userProfile.uid,
+              teacherName: userProfile.fullName,
+              teacherEmail,
+              action: format === 'pdf' ? 'pdf_downloaded' : 'word_downloaded',
+              paperTitle: exportedTitle || printingTest.title,
+              grade: printingTest.grade,
+              subject: printingTest.subject,
+              board: printingTest.board,
+              mcqCount: printingTest.questionCount ?? printingTest.questions?.length ?? 0,
+              shortCount: printingTest.shortQuestions?.length ?? printingTest.shortQuestionCount ?? 0,
+              longCount: printingTest.longQuestions?.length ?? printingTest.longQuestionCount ?? 0,
+              testId: printingTest.id,
+            }).catch(() => {});
+          }}
           onClose={() => setPrintingTest(null)}
         />
       )}

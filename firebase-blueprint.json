@@ -468,6 +468,93 @@
         }
       },
       "required": ["id", "testId", "testTitle", "testCreatorId", "grade", "subject", "studentId", "studentName", "studentIdentifier", "answers", "score", "totalQuestions", "percentage", "deliveryModeUsed", "resultReleased", "status", "releasedBy", "submittedAt", "updatedAt"]
+    },
+    "TeacherActivity": {
+      "title": "TeacherActivity",
+      "description": "Immutable audit log of teacher paper creation, PDF downloads, Word downloads, and paper publishing events.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Activity document ID."
+        },
+        "teacherId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the teacher performing the action."
+        },
+        "teacherName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display name of the teacher."
+        },
+        "teacherEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200,
+          "description": "Verified email address of the teacher."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["paper_generated", "pdf_downloaded", "word_downloaded", "paper_published", "paper_saved_draft"],
+          "description": "Type of teacher paper activity."
+        },
+        "paperTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Title of the generated, exported, or published paper."
+        },
+        "grade": {
+          "type": "string",
+          "enum": ["9th", "10th", "1st A", "2nd Year"],
+          "description": "Class level of the paper."
+        },
+        "subject": {
+          "type": "string",
+          "enum": [
+            "Physics", "Chemistry", "Biology", "Math", "Computer Science",
+            "English", "Urdu", "Islamiat", "Pakistan Studies", "General Science",
+            "General Math", "Civics", "Economics", "Education", "Islamic Studies",
+            "History", "Geography", "Sociology", "Psychology", "Home Economics"
+          ],
+          "description": "Subject of the paper."
+        },
+        "board": {
+          "type": "string",
+          "enum": ["fbise_nbf", "punjab_ptb"],
+          "description": "Curriculum board selected for the paper."
+        },
+        "mcqCount": {
+          "type": "integer",
+          "description": "Number of MCQs in the paper."
+        },
+        "shortCount": {
+          "type": "integer",
+          "description": "Number of short questions in the paper."
+        },
+        "longCount": {
+          "type": "integer",
+          "description": "Number of long questions in the paper."
+        },
+        "testId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Associated MCQTest document ID if saved/published, otherwise empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the action occurred."
+        }
+      },
+      "required": ["id", "teacherId", "teacherName", "teacherEmail", "action", "paperTitle", "grade", "subject", "board", "mcqCount", "shortCount", "longCount", "testId", "createdAt"]
     }
   },
   "firestore": {
@@ -485,11 +572,15 @@
     },
     "/tests/{testId}": {
       "schema": { "$ref": "#/entities/MCQTest" },
-      "description": "Subject MCQ tests across 9th, 1st A, and 2nd Year."
+      "description": "Subject MCQ tests across 9th, 10th, 1st A, and 2nd Year."
     },
     "/attempts/{attemptId}": {
       "schema": { "$ref": "#/entities/TestAttempt" },
       "description": "Student MCQ test submissions and result release states."
+    },
+    "/teacherActivities/{activityId}": {
+      "schema": { "$ref": "#/entities/TeacherActivity" },
+      "description": "Immutable audit log of teacher paper generation, PDF/Word downloads, and publishing."
     }
   }
 }
